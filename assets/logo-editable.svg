@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg viewBox="0 0 384 96" xmlns="http://www.w3.org/2000/svg" xmlns:bx="https://boxy-svg.com">
+  <defs>
+    <style bx:fonts="Noto Sans Mono">@import url(https://fonts.googleapis.com/css2?family=Noto+Sans+Mono%3Aital%2Cwght%400%2C100..900&amp;display=swap);</style>
+  </defs>
+  <text style="fill: rgb(51, 51, 51); font-family: 'Noto Sans Mono'; font-size: 40px; font-weight: 100; letter-spacing: 1.5px; white-space: pre;" lang="en" x="13.499" y="63.525"><desc>Logo for the chatty coder project.</desc><title>chatty coder</title>{ch@tty cod:r}</text>
+</svg>
+<!-- Created using https://boxy-svg.com/app -->
