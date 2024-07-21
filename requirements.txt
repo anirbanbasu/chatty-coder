@@ -1,0 +1,15 @@
+# Build and commit
+pre-commit
+
+# System-level
+python-dotenv
+icecream
+
+# LangChain and LangGraph
+langgraph
+langchain_community
+langchain
+langchainhub
+
+# User interface
+gradio
