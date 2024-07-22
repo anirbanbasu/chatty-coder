@@ -10,6 +10,7 @@ langgraph
 langchain_community
 langchain
 langchainhub
+langchain_groq
 
 # User interface
 gradio
