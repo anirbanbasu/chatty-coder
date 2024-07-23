@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import zipfile
-
-import datasets
-import requests
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
@@ -28,7 +23,6 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_community.retrievers import BM25Retriever
 
 from code_executor import CodeExecutor
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -72,49 +66,52 @@ class codeOutput(BaseModel):
 class CoderAgent:
     def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
         # Retrieve the USA Computing Olympiad dataset
-        usaco_url = "https://storage.googleapis.com/benchmarks-artifacts/usaco/usaco_sampled_with_tests.zip"
-        zip_path = "usaco.zip"
-        extract_path = "usaco_datasets"
+        # usaco_url = "https://storage.googleapis.com/benchmarks-artifacts/usaco/usaco_sampled_with_tests.zip"
+        # zip_path = "usaco.zip"
+        # extract_path = "usaco_datasets"
 
-        response = requests.get(usaco_url)
-        with open(zip_path, "wb") as file:
-            file.write(response.content)
+        # response = requests.get(usaco_url)
+        # with open(zip_path, "wb") as file:
+        #     file.write(response.content)
 
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_path)
+        # with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        #     zip_ref.extractall(extract_path)
 
-        os.remove(zip_path)
+        # os.remove(zip_path)
 
-        ds = datasets.load_from_disk(
-            os.path.join(extract_path, "usaco_v3_sampled_with_tests")
-        )
+        # ds = datasets.load_from_disk(
+        #     os.path.join(extract_path, "usaco_v3_sampled_with_tests")
+        # )
 
-        # We will test our agent on index 0 (the same as above).
-        # Later, we will test on index 2 (the first 'silver difficulty' question)
-        test_indices = [0, 2]
-        train_ds = [row for i, row in enumerate(ds) if i not in test_indices]
+        # # We will test our agent on index 0 (the same as above).
+        # # Later, we will test on index 2 (the first 'silver difficulty' question)
+        # test_indices = [0, 2]
+        # train_ds = [row for i, row in enumerate(ds) if i not in test_indices]
         # test_ds = [row for i, row in enumerate(ds) if i in test_indices]
 
         self._llm = llm
         self._prompt = prompt
-        self._runnable_solver = self._prompt | self._llm.bind_tools([codeOutput])
+        self._runnable_solver = self._prompt.partial(
+            examples=constants.EMPTY_STRING
+        ) | self._llm.bind_tools([codeOutput])
         self._runnable_draft_solver = self._prompt.partial(
             examples=constants.EMPTY_STRING
         ) | self._llm.bind_tools([codeOutput])
         self._evaluator = CodeExecutor()
-        self._retriever = BM25Retriever.from_texts(
-            [self.format_example(row) for row in train_ds]
-        )
+        # self._retriever = BM25Retriever.from_texts(
+        #     [self.format_example(row) for row in train_ds]
+        # )
 
     def format_example(self, row):
         question = row["description"]
         answer = row["solution"]
-        return f"""<problem>
+        result = f"""<problem>
             {question}
             </problem>
             <solution>
             {answer}
             </solution>"""
+        return result
 
     def retrieve_examples(self, state: AgentState, config: RunnableConfig):
         top_k = config["configurable"].get("k") or 2
@@ -132,30 +129,34 @@ class CoderAgent:
             {examples_str}
             <Examples>
             Approach this new question with similar sophistication."""
+
         return {"examples": examples_str}
 
     def solve(self, state: AgentState, draft: bool = False) -> dict:
         # The agent only can see the "messages" and will ignore the test info
-        # return {"messages": [self.runnable.invoke({"messages": state["messages"]})]}
-        inputs = {"messages": state["messages"]}
-        has_examples = bool(state.get("examples"))
-        output_key = "candidate"  # Used in the draft node
-        if has_examples:
-            output_key = "messages"
-            # Used in the solve node
-            inputs["examples"] = state["examples"]
-        response = (
-            self._runnable_draft_solver.invoke(inputs)
-            if draft is True
-            else self._runnable_solver.invoke(inputs)
-        )
-        if not response.content:
-            return {
-                output_key: AIMessage(
-                    content="I'll need to think about this step by step."
-                )
-            }
-        return {output_key: response}
+        ic(state)
+        return {
+            "messages": [self._runnable_solver.invoke({"messages": state["messages"]})]
+        }
+        # inputs = {"messages": state["messages"]}
+        # has_examples = bool(state.get("examples"))
+        # output_key = "candidate" if draft else "messages"  # Used in the draft node
+        # if has_examples:
+        #     output_key = "messages"
+        #     # Used in the solve node
+        #     inputs["examples"] = state["examples"]
+        # response = (
+        #     self._runnable_draft_solver.invoke(inputs)
+        #     if draft is True
+        #     else self._runnable_solver.invoke(inputs)
+        # )
+        # if not response.content:
+        #     return {
+        #         output_key: AIMessage(
+        #             content="I'll need to think about this step by step."
+        #         )
+        #     }
+        # return {output_key: response}
 
     def draft_solve(self, state: AgentState) -> dict:
         return self.solve(state, draft=True)
@@ -206,27 +207,29 @@ class CoderAgent:
         )
         response = f"Incorrect submission. Please respond with updated code.\nPass rate: {succeeded}/{num_test_cases}\nResults:\n{responses}"
         formatted_message = self.format_tool_message(response, ai_message)
+
         return {"messages": [formatted_message]}
 
     def build_agent_graph(self):
         builder = StateGraph(AgentState)
-        builder.add_node("draft", self.draft_solve)
-        builder.add_edge(START, "draft")
-        builder.add_node("retrieve", self.retrieve_examples)
+        # builder.add_node("draft", self.draft_solve)
+        # builder.add_node("retrieve", self.retrieve_examples)
         builder.add_node("solve", self.solve)
-        builder.add_node("evaluate", self.evaluate)
+        # builder.add_node("evaluate", self.evaluate)
         # Add connectivity
-        builder.add_edge("draft", "retrieve")
-        builder.add_edge("retrieve", "solve")
-        builder.add_edge("solve", "evaluate")
+        builder.add_edge(START, "solve")
+        # builder.add_edge("draft", "retrieve")
+        # builder.add_edge("retrieve", "solve")
+        # builder.add_edge("solve", "evaluate")
 
         def control_edge(state: AgentState):
             if state.get("status") == "success":
                 return END
             return "solve"
 
-        builder.add_conditional_edges(
-            "evaluate", control_edge, {END: END, "solve": "solve"}
-        )
+        # builder.add_conditional_edges(
+        #     "evaluate", control_edge, {END: END, "solve": "solve"}
+        # )
+        builder.add_edge("solve", END)
         checkpointer = SqliteSaver.from_conn_string(":memory:")
-        self.agent_graph = builder.compile(checkpointer=checkpointer, debug=True)
+        self.agent_graph = builder.compile(checkpointer=checkpointer, debug=False)

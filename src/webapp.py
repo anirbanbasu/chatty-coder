@@ -26,7 +26,7 @@ except ImportError:  # Graceful fallback if IceCream isn't installed.
 
 # from langchain_community.chat_models import ChatOllama
 from langchain_experimental.llms.ollama_functions import OllamaFunctions
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # from langchain_groq.chat_models import ChatGroq
 # from langchain_core.output_parsers import StrOutputParser
@@ -117,7 +117,7 @@ class GradioApp:
         )
         return value
 
-    def find_solution(self, user_question: str) -> dict:
+    def find_solution(self, user_question: str) -> list[str, str, str]:
         """
         Find a coding solution to the user question.
 
@@ -125,7 +125,7 @@ class GradioApp:
             user_question (str): The user question to provide a solution for.
 
         Returns:
-            (dict) The coding solution.
+            list[str, str, str]: A list containing the reasoning, pseudocode, and code for the solution.
         """
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -135,20 +135,29 @@ class GradioApp:
                         constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
                     )
                 ),
-                HumanMessage(content="{messages}"),
+                HumanMessage(content=user_question),
             ]
         )
         coder_agent = CoderAgent(llm=self._llm, prompt=prompt)
         coder_agent.build_agent_graph()
-        config = {"configurable": {"thread_id": "question-recall", "k": 3}}
-        result = coder_agent.agent_graph.invoke(
+        config = {"configurable": {"thread_id": "1", "k": 3}}
+        result_iterator = coder_agent.agent_graph.stream(
             input={
-                "messages": [user_question],
+                "messages": prompt.messages,
                 "runtime_limit": 10,
             },
             config=config,
         )
-        return result["messages"][0]
+        json_dict = next(result_iterator)
+        ic(json_dict)
+        ai_message: AIMessage = json_dict["solve"]["messages"][-1]
+        if not ai_message.tool_calls:
+            raise ValueError("Coding agent did not produce a valid code block")
+        return [
+            ai_message.tool_calls[0]["args"]["reasoning"],
+            ai_message.tool_calls[0]["args"]["pseudocode"],
+            ai_message.tool_calls[0]["args"]["code"],
+        ]
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
@@ -185,15 +194,26 @@ class GradioApp:
                         f"""# Solution
                         Using `{self._llm.model}@{self._llm_provider}`"""
                     )
-                    output_coding_solution = gr.JSON(
-                        label="The coding solution",
-                        elem_id="coding_solution",
+                    output_reasoning = gr.Markdown(
+                        label="Reasoning",
+                        show_label=True,
+                        line_breaks=True,
+                    )
+                    output_pseudocode = gr.Markdown(
+                        label="Pseudocode",
+                        show_label=True,
+                        line_breaks=True,
+                    )
+                    output_code = gr.Code(
+                        label="Code",
+                        show_label=True,
+                        language="python",
                     )
             # Button actions
             btn_ask.click(
                 self.find_solution,
                 inputs=[input_user_question],
-                outputs=output_coding_solution,
+                outputs=[output_reasoning, output_pseudocode, output_code],
                 api_name="get_coding_solution",
             )
 
