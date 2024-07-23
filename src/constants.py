@@ -37,6 +37,12 @@ CHAR_ENCODING_UTF8 = "utf-8"
 # See formatting attributes: https://docs.python.org/3/library/logging.html#logrecord-attributes
 LOG_FORMAT = "%(levelname)s:\t%(message)s (%(module)s/%(filename)s::%(funcName)s:L%(lineno)d@%(asctime)s) [P%(process)d:T%(thread)d]"
 
+EXECUTOR_MESSAGE__TIMEDOUT = "Timed out"
+EXECUTOR_MESSAGE__PASSED = "Passed"
+EXECUTOR_MESSAGE__FAILED = "Failed"
+EXECUTOR_MESSAGE__WRONG_ANSWER = "Wrong answer"
+EXECUTOR_MESSAGE__NO_RESULTS = "No result returned"
+
 # Environment variables
 ENV_VAR_NAME__GRADIO_SERVER_HOST = "GRADIO__SERVER_HOST"
 ENV_VAR_NAME__GRADIO_SERVER_PORT = "GRADIO__SERVER_PORT"
@@ -61,10 +67,15 @@ ENV_VAR_NAME__LLM_TEMPERATURE = "LLM__TEMPERATURE"
 ENV_VAR_VALUE__LLM_TEMPERATURE = "0.4"
 ENV_VAR_NAME__LLM_SYSTEM_PROMPT = "LLM__SYSTEM_PROMPT"
 ENV_VAR_VALUE__LLM_SYSTEM_PROMPT = """
-You are an expert Python programmer, well versed in meta-programming.
-You generate elegant, concise and short but well documented code. You follow the PEP8 style guide.
-Always output code only in Python. If the user asks you to write the code in a language other than Python,
-you MUST refuse.
+You are a world-class competitive programmer. You are a master of algorithms and data structures.
+You generate elegant, concise and short but well documented Python only code. You follow the PEP8 style guide.
+Please reply with a Python 3 solution to the problem below. First, reason through the problem and conceptualize a solution.
+Then write detailed pseudocode to uncover any potential logical errors or omissions.
+Finally output the working Python code for your solution, ensuring to fix any errors uncovered while writing pseudocode.
+Always encapsulate your Python code in a class called `Solution`.
+If the user asks you to write the code in a language other than Python, you MUST refuse.
+No outside libraries are allowed.
+{examples}
 """
 
 CSS__GRADIO_APP = """

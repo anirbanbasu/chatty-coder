@@ -17,15 +17,19 @@ import os
 from dotenv import load_dotenv
 from typing import Any
 
+from coder_agent import CoderAgent
+
 try:
     from icecream import ic
 except ImportError:  # Graceful fallback if IceCream isn't installed.
     ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
-from langchain_community.chat_models import ChatOllama
+# from langchain_community.chat_models import ChatOllama
+from langchain_experimental.llms.ollama_functions import OllamaFunctions
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # from langchain_groq.chat_models import ChatGroq
-from langchain_core.output_parsers import StrOutputParser
+# from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 import gradio as gr
@@ -54,7 +58,7 @@ class GradioApp:
         ic(self._gradio_host, self._gradio_port)
         self._llm_provider = self.parse_env(constants.ENV_VAR_NAME__LLM_PROVIDER)
         if self._llm_provider == "Ollama":
-            self._llm = ChatOllama(
+            self._llm = OllamaFunctions(
                 base_url=self.parse_env(
                     constants.ENV_VAR_NAME__LLM_OLLAMA_URL,
                     constants.ENV_VAR_VALUE__LLM_OLLAMA_URL,
@@ -68,6 +72,7 @@ class GradioApp:
                     constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
+                format="json",
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {self._llm_provider}")
@@ -95,7 +100,7 @@ class GradioApp:
             (Any | list[Any]) The parsed value, either as a single value or a list. The type of the returned single
             value or individual elements in the list depends on the supplied type_cast parameter.
         """
-        if var_name not in os.environ:
+        if var_name not in os.environ and default_value is None:
             raise ValueError(f"Environment variable {var_name} does not exist.")
         parsed_value = None
         if type_cast is bool:
@@ -112,32 +117,38 @@ class GradioApp:
         )
         return value
 
-    def agentless_solution(self, user_question: str) -> str:
+    def find_solution(self, user_question: str) -> dict:
         """
-        Provide an agent-less coding solution to the user question.
+        Find a coding solution to the user question.
 
         Args:
             user_question (str): The user question to provide a solution for.
 
         Returns:
-            (str) The coding solution.
+            (dict) The coding solution.
         """
         prompt = ChatPromptTemplate.from_messages(
             [
-                (
-                    "system",
-                    self.parse_env(
+                SystemMessage(
+                    content=self.parse_env(
                         constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
                         constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
-                    ),
+                    )
                 ),
-                ("human", "{user_question}"),
+                HumanMessage(content="{messages}"),
             ]
         )
-        # ChatPromptTemplate.from_template("{user_question}")
-        chain = prompt | self._llm | StrOutputParser()
-        result = chain.invoke({"user_question": user_question})
-        return result
+        coder_agent = CoderAgent(llm=self._llm, prompt=prompt)
+        coder_agent.build_agent_graph()
+        config = {"configurable": {"thread_id": "question-recall", "k": 3}}
+        result = coder_agent.agent_graph.invoke(
+            input={
+                "messages": [user_question],
+                "runtime_limit": 10,
+            },
+            config=config,
+        )
+        return result["messages"][0]
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
@@ -174,13 +185,13 @@ class GradioApp:
                         f"""# Solution
                         Using `{self._llm.model}@{self._llm_provider}`"""
                     )
-                    output_coding_solution = gr.Markdown(
+                    output_coding_solution = gr.JSON(
                         label="The coding solution",
                         elem_id="coding_solution",
                     )
             # Button actions
             btn_ask.click(
-                self.agentless_solution,
+                self.find_solution,
                 inputs=[input_user_question],
                 outputs=output_coding_solution,
                 api_name="get_coding_solution",
