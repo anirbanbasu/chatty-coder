@@ -4,13 +4,19 @@ pre-commit
 # System-level
 python-dotenv
 icecream
+pytest
 
 # LangChain and LangGraph
 langgraph
 langchain_community
+langchain-experimental
 langchain
 langchainhub
 langchain_groq
+rank_bm25
 
 # User interface
 gradio
+
+# Data
+datasets
