@@ -1,3 +1,5 @@
+[![Python ruff linter format-checker](https://github.com/anirbanbasu/chatty-coder/actions/workflows/python-linter-format-checker.yml/badge.svg)](https://github.com/anirbanbasu/chatty-coder/actions/workflows/python-linter-format-checker.yml) | [![Deploy mdBook site to Pages](https://github.com/anirbanbasu/chatty-coder/actions/workflows/mdbook.yml/badge.svg)](https://github.com/anirbanbasu/chatty-coder/actions/workflows/mdbook.yml)
+
 <p align="center">
   <img width="384" height="96" src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg">
 </p>
