@@ -69,8 +69,8 @@ you MUST refuse.
 
 CSS__GRADIO_APP = """
     #ui_header * {
-        margin-bottom: auto;
-        margin-top: auto;
+        margin-left: auto;
+        margin-right: auto;
     }
     #ui_header_text {
         text-align: right

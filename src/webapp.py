@@ -38,6 +38,8 @@ gr.set_static_paths(paths=["assets/logo-embed.svg"])
 class GradioApp:
     """The main Gradio app class."""
 
+    _gr_state_user_input_text = gr.State(constants.EMPTY_STRING)
+
     def __init__(self):
         """Default constructor for the Gradio app."""
         ic(load_dotenv())
@@ -140,45 +142,37 @@ class GradioApp:
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
         with gr.Blocks(css=constants.CSS__GRADIO_APP) as self.interface:
-            with gr.Row(elem_id="ui_header"):
-                gr.HTML(
-                    """
+            gr.HTML(
+                """
                     <img
                         width="384"
                         height="96"
                         style="filter: invert(.7);"
                         alt="chatty-coder logo"
                         src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
-                    """
-                )
-                gr.HTML(
-                    """
-                    <span
-                        style="font-weight:100;
-                               font-style: oblique 45deg;
-                               font-size: 1.5rem;
-                               font-family: monospace;
-                               filter: invert(.7);
-                        ">finding coding solutions, in Python, with you!</span>
-                    """,
-                    elem_id="ui_header_text",
-                )
+                """,
+                elem_id="ui_header",
+            )
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
                     gr.Markdown("# Coding challenge")
-                    input_user_question = gr.TextArea(
-                        label="The coding question",
-                        placeholder="Enter the coding question that you want to ask...",
-                        lines=10,
-                        elem_id="user_question",
-                    )
+                    with gr.Tab(label="The coding question"):
+                        input_user_question = gr.TextArea(
+                            label="Question (in Markdown)",
+                            placeholder="Enter the coding question that you want to ask...",
+                            lines=10,
+                            elem_id="user_question",
+                        )
+                    with gr.Tab(label="Question preview"):
+                        user_input_preview = gr.Markdown()
                     btn_ask = gr.Button(
                         value="Ask",
                         elem_id="btn_ask",
                     )
                 with gr.Column(elem_id="ui_main_right"):
                     gr.Markdown(
-                        f"# Solution using {self._llm.model}@{self._llm_provider}"
+                        f"""# Solution
+                        Using `{self._llm.model}@{self._llm_provider}`"""
                     )
                     output_coding_solution = gr.Markdown(
                         label="The coding solution",
@@ -189,6 +183,15 @@ class GradioApp:
                 self.agentless_solution,
                 inputs=[input_user_question],
                 outputs=output_coding_solution,
+                api_name="get_coding_solution",
+            )
+
+            # Automatically generate preview the user input as Markdown
+            input_user_question.change(
+                lambda text: text,
+                inputs=[input_user_question],
+                outputs=[user_input_preview],
+                api_name=False,
             )
 
     def run(self):
