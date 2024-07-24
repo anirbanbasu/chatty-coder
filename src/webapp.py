@@ -24,13 +24,17 @@ try:
 except ImportError:  # Graceful fallback if IceCream isn't installed.
     ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
-# from langchain_community.chat_models import ChatOllama
 from langchain_experimental.llms.ollama_functions import OllamaFunctions
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.graph.message import AnyMessage
 
 # from langchain_groq.chat_models import ChatGroq
 # from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    MessagesPlaceholder,
+)
 
 import gradio as gr
 import constants
@@ -121,27 +125,36 @@ class GradioApp:
         )
         return value
 
-    def find_solution(self, user_question: str):
+    def find_solution(self, user_question: str, runtime_limit: int):
         """
         Generator function to find a coding solution to the user question.
 
         Args:
             user_question (str): The user question to provide a solution for.
+            runtime_limit (int): The runtime limit, in seconds, for executing the solution.
 
         Yields:
             list[str, str, str]: A list containing the reasoning, pseudocode, and code for the solution.
         """
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                SystemMessage(
-                    content=self.parse_env(
+        prompt = ChatPromptTemplate(
+            input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
+            input_types={constants.PROMPT_TEMPLATE__VAR_MESSAGES: AnyMessage},
+            partial_variables={
+                constants.PROMPT_TEMPLATE__PARTIAL_VAR__EXAMPLES: constants.EMPTY_STRING
+            },
+            messages=[
+                SystemMessagePromptTemplate.from_template(
+                    template=self.parse_env(
                         constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
                         constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
                     )
                 ),
-                HumanMessage(content=user_question),
-            ]
+                MessagesPlaceholder(
+                    variable_name=constants.PROMPT_TEMPLATE__VAR_MESSAGES
+                ),
+            ],
         )
+        ic(prompt)
         coder_agent = CoderAgent(llm=self._llm, prompt=prompt)
         coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": "1", "k": 3}}
@@ -149,8 +162,10 @@ class GradioApp:
         # Note that this streams the results by graph step, not by individual messages.
         result_iterator = coder_agent.agent_graph.stream(
             input={
-                "messages": prompt.messages,
-                "runtime_limit": 10,
+                constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(
+                    content=user_question
+                ),
+                constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
             },
             config=config,
             # stream_mode="values",
@@ -158,7 +173,9 @@ class GradioApp:
         for result in result_iterator:
             ic(result)
             if "solve" in result:
-                ai_message: AIMessage = result["solve"]["messages"][-1]
+                ai_message: AIMessage = result["solve"][
+                    constants.AGENT_STATE__KEY_MESSAGES
+                ][-1]
                 if not ai_message.tool_calls:
                     raise ValueError("Coding agent did not produce a valid code block")
                 yield [
@@ -189,7 +206,7 @@ class GradioApp:
                         """,
                     )
                 with gr.Column(scale=3):
-                    btn_toggle = gr.Button("Toggle dark mode", variant="secondary")
+                    btn_toggle = gr.Button("Toggle dark mode")
                     btn_toggle.click(
                         None,
                         js=constants.JS__DARK_MODE_TOGGLE,
@@ -197,6 +214,17 @@ class GradioApp:
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
                     gr.Markdown("# Coding challenge")
+                    btn_code = gr.Button(
+                        value="Let's code!",
+                        variant="primary",
+                    )
+                    slider_runtime_limit = gr.Slider(
+                        label="Runtime limit (in seconds)",
+                        minimum=5,
+                        maximum=35,
+                        step=1,
+                        value=10,
+                    )
                     with gr.Tab(label="The coding question"):
                         input_user_question = gr.TextArea(
                             label="Question (in Markdown)",
@@ -206,11 +234,6 @@ class GradioApp:
                         )
                     with gr.Tab(label="Question preview"):
                         user_input_preview = gr.Markdown()
-                    btn_ask = gr.Button(
-                        value="Let's code!",
-                        variant="primary",
-                        elem_id="btn_ask",
-                    )
                 with gr.Column(elem_id="ui_main_right"):
                     gr.Markdown(
                         f"""# Solution
@@ -232,9 +255,9 @@ class GradioApp:
                         language="python",
                     )
             # Button actions
-            btn_ask.click(
+            btn_code.click(
                 self.find_solution,
-                inputs=[input_user_question],
+                inputs=[input_user_question, slider_runtime_limit],
                 outputs=[output_reasoning, output_pseudocode, output_code],
                 api_name="get_coding_solution",
             )

@@ -91,12 +91,8 @@ class CoderAgent:
 
         self._llm = llm
         self._prompt = prompt
-        self._runnable_solver = self._prompt.partial(
-            examples=constants.EMPTY_STRING
-        ) | self._llm.bind_tools([codeOutput])
-        self._runnable_draft_solver = self._prompt.partial(
-            examples=constants.EMPTY_STRING
-        ) | self._llm.bind_tools([codeOutput])
+        self._runnable_solver = self._prompt | self._llm.bind_tools([codeOutput])
+        self._runnable_draft_solver = self._prompt | self._llm.bind_tools([codeOutput])
         self._evaluator = CodeExecutor()
         # self._retriever = BM25Retriever.from_texts(
         #     [self.format_example(row) for row in train_ds]
@@ -132,7 +128,7 @@ class CoderAgent:
 
         return {"examples": examples_str}
 
-    def solve(self, state: AgentState, draft: bool = False) -> dict:
+    def solve(self, state: AgentState) -> dict:
         # The agent only can see the "messages" and will ignore the test info
         ic(state)
         return {
@@ -159,7 +155,8 @@ class CoderAgent:
         # return {output_key: response}
 
     def draft_solve(self, state: AgentState) -> dict:
-        return self.solve(state, draft=True)
+        state["draft"] = True
+        return self.solve(state)
 
     # This is the node we will add to the graph.
     # Most tool-calling APIs require that the `ToolMessage` contain the ID
