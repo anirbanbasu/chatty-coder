@@ -166,3 +166,7 @@ cython_debug/
 flagged/
 # Datasets downloaded using the datasets package
 *_datasets/
+
+# mdBook output
+docs/book/
+docs/index.html
