@@ -52,6 +52,7 @@ class AgentState(TypedDict):
     test_cases: list[TestCase]
     runtime_limit: int
     status: str
+    draft: bool = False
 
 
 class codeOutput(BaseModel):
@@ -158,54 +159,98 @@ class CoderAgent:
         state["draft"] = True
         return self.solve(state)
 
-    # This is the node we will add to the graph.
-    # Most tool-calling APIs require that the `ToolMessage` contain the ID
-    # of the
-    def format_tool_message(self, response: str, ai_message: AIMessage):
+    def format_tool_message(self, response: str, ai_message: AIMessage) -> ToolMessage:
+        """
+        Format the response as a tool message specifying the tool call ID.
+
+        Args:
+            response: The response to be formatted.
+            ai_message: The AIMessage object containing the tool call ID.
+
+        Returns:
+            ToolMessage: The formatted tool message.
+        """
+        # This is the node we will add to the agent graph.
+        # Most tool-calling APIs require that the `ToolMessage` contain the ID
+        # of the tool call that generated the message.
         return ToolMessage(
             content=response + "\nMake all fixes using the codeOutput tool.",
-            tool_call_id=ai_message.tool_calls[0]["id"],
+            tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
         )
 
     def evaluate(self, state: AgentState):
-        test_cases = state["test_cases"]
-        ai_message: AIMessage = state["messages"][-1]
+        """
+        Evaluate the correctness of the code.
+
+        Args:
+            state: The state of the agent.
+
+        Returns:
+            dict: The updated state of the agent.
+        """
+        test_cases = state[constants.AGENT_STATE__KEY_TEST_CASES]
+        # Extract the `AIMessage` that is expected to contain the code from the last tool call.
+        ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         if not ai_message.tool_calls:
+            # If there was no tool call, add a `HumanMessage` to prompt the agent to generate code.
             return {
-                "messages": [
+                constants.AGENT_STATE__KEY_MESSAGES: [
                     HumanMessage(
                         content="No code submitted. Please try again using the correct Python code."
                     )
                 ]
             }
         try:
-            code = ai_message.tool_calls[0]["args"]["code"]
+            # Extract the code from the tool call.
+            code = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
+                constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
+            ]
         except Exception as e:
-            return {"messages": [self.format_tool_message(repr(e), ai_message)]}
+            # If there was an error extracting the code, return an error message as state.
+            return {
+                constants.AGENT_STATE__KEY_MESSAGES: [
+                    self.format_tool_message(repr(e), ai_message)
+                ]
+            }
         num_test_cases = len(test_cases)
+        if num_test_cases == 0:
+            return {
+                constants.AGENT_STATE__KEY_MESSAGES: [
+                    self.format_tool_message(
+                        "There are no test cases to evaluate the code.",
+                        ai_message,
+                    )
+                ]
+            }
         succeeded = 0
         test_results = []
-        # TODO: Multiprocess
+        # TODO: Enable parallel execution of test cases.
         for test_case in test_cases:
-            input_data = test_case["inputs"]
-            expected_output = test_case["outputs"]
+            input_data = test_case[constants.TEST_CASE__KEY_INPUTS]
+            expected_output = test_case[constants.TEST_CASE__KEY_OUTPUTS]
             test_result = self._evaluator.check_correctness(
-                code, input_data, expected_output, state["runtime_limit"]
+                code,
+                input_data,
+                expected_output,
+                state[constants.AGENT_STATE__KEY_RUNTIME_LIMIT],
             )
             test_results.append(test_result)
             if test_result == constants.EXECUTOR_MESSAGE__PASSED:
                 succeeded += 1
         pass_rate = succeeded / num_test_cases if num_test_cases else "N/A"
         if pass_rate == 1:
-            return {"status": "success"}
+            return {constants.AGENT_STATE__KEY_STATUS: "success"}
 
         responses = "\n".join(
             [f"<test id={i}>\n{r}\n</test>" for i, r in enumerate(test_results)]
         )
-        response = f"Incorrect submission. Please respond with updated code.\nPass rate: {succeeded}/{num_test_cases}\nResults:\n{responses}"
-        formatted_message = self.format_tool_message(response, ai_message)
+        response = f"Incorrect submission. Please respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
 
-        return {"messages": [formatted_message]}
+        return {
+            constants.AGENT_STATE__KEY_MESSAGES: [
+                self.format_tool_message(response, ai_message)
+            ]
+        }
 
     def build_agent_graph(self):
         builder = StateGraph(AgentState)
