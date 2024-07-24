@@ -48,15 +48,19 @@ class GradioApp:
         """Default constructor for the Gradio app."""
         ic(load_dotenv())
         self._gradio_host: str = self.parse_env(
-            constants.ENV_VAR_NAME__GRADIO_SERVER_HOST
+            constants.ENV_VAR_NAME__GRADIO_SERVER_HOST,
+            default_value=constants.ENV_VAR_VALUE__GRADIO_SERVER_HOST,
         )
         self._gradio_port: int = self.parse_env(
             constants.ENV_VAR_NAME__GRADIO_SERVER_PORT,
-            default_value=constants.ENV_VAR_VALUE__GRADIO_SERVER_HOST,
+            default_value=constants.ENV_VAR_VALUE__GRADIO_SERVER_PORT,
             type_cast=int,
         )
         ic(self._gradio_host, self._gradio_port)
-        self._llm_provider = self.parse_env(constants.ENV_VAR_NAME__LLM_PROVIDER)
+        self._llm_provider = self.parse_env(
+            constants.ENV_VAR_NAME__LLM_PROVIDER,
+            default_value=constants.ENV_VAR_VALUE__LLM_PROVIDER,
+        )
         if self._llm_provider == "Ollama":
             self._llm = OllamaFunctions(
                 base_url=self.parse_env(
@@ -167,7 +171,7 @@ class GradioApp:
                     <img
                         width="384"
                         height="96"
-                        style="filter: invert(.7);"
+                        style="filter: invert(0.5);"
                         alt="chatty-coder logo"
                         src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
                 """,
