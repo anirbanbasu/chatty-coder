@@ -121,14 +121,14 @@ class GradioApp:
         )
         return value
 
-    def find_solution(self, user_question: str) -> list[str, str, str]:
+    def find_solution(self, user_question: str):
         """
-        Find a coding solution to the user question.
+        Generator function to find a coding solution to the user question.
 
         Args:
             user_question (str): The user question to provide a solution for.
 
-        Returns:
+        Yields:
             list[str, str, str]: A list containing the reasoning, pseudocode, and code for the solution.
         """
         prompt = ChatPromptTemplate.from_messages(
@@ -145,23 +145,27 @@ class GradioApp:
         coder_agent = CoderAgent(llm=self._llm, prompt=prompt)
         coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": "1", "k": 3}}
+        # FIXME: Stream mode is not working as expected. Need to improve.
+        # Note that this streams the results by graph step, not by individual messages.
         result_iterator = coder_agent.agent_graph.stream(
             input={
                 "messages": prompt.messages,
                 "runtime_limit": 10,
             },
             config=config,
+            # stream_mode="values",
         )
-        json_dict = next(result_iterator)
-        ic(json_dict)
-        ai_message: AIMessage = json_dict["solve"]["messages"][-1]
-        if not ai_message.tool_calls:
-            raise ValueError("Coding agent did not produce a valid code block")
-        return [
-            ai_message.tool_calls[0]["args"]["reasoning"],
-            ai_message.tool_calls[0]["args"]["pseudocode"],
-            ai_message.tool_calls[0]["args"]["code"],
-        ]
+        for result in result_iterator:
+            ic(result)
+            if "solve" in result:
+                ai_message: AIMessage = result["solve"]["messages"][-1]
+                if not ai_message.tool_calls:
+                    raise ValueError("Coding agent did not produce a valid code block")
+                yield [
+                    ai_message.tool_calls[0]["args"]["reasoning"],
+                    ai_message.tool_calls[0]["args"]["pseudocode"],
+                    ai_message.tool_calls[0]["args"]["code"],
+                ]
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
