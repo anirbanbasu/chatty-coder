@@ -89,10 +89,18 @@ You may be provided with some examples, which may be in languages other than Pyt
 
 CSS__GRADIO_APP = """
     #ui_header * {
-        margin-left: auto;
-        margin-right: auto;
+        margin-top: auto;
+        margin-bottom: auto;
     }
     #ui_header_text {
         text-align: right
     }
 """
+
+JS__DARK_MODE_TOGGLE = """
+                            () => {
+                                document.body.classList.toggle('dark');
+                                // document.querySelector('gradio-app').style.backgroundColor = 'var(--color-background-primary)';
+                                document.querySelector('gradio-app').style.background = 'var(--body-background-fill)';
+                            }
+                        """

@@ -165,18 +165,31 @@ class GradioApp:
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
-        with gr.Blocks(css=constants.CSS__GRADIO_APP) as self.interface:
-            gr.HTML(
-                """
-                    <img
-                        width="384"
-                        height="96"
-                        style="filter: invert(0.5);"
-                        alt="chatty-coder logo"
-                        src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
-                """,
-                elem_id="ui_header",
-            )
+        with gr.Blocks(
+            # See theming guide at https://www.gradio.app/guides/theming-guide
+            # theme="gstaff/xkcd",
+            theme="derekzen/stardust",
+            css=constants.CSS__GRADIO_APP,
+            analytics_enabled=False,
+        ) as self.interface:
+            with gr.Row(elem_id="ui_header", equal_height=True):
+                with gr.Column(scale=10):
+                    gr.HTML(
+                        """
+                            <img
+                                width="384"
+                                height="96"
+                                style="filter: invert(0.5);"
+                                alt="chatty-coder logo"
+                                src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
+                        """,
+                    )
+                with gr.Column(scale=3):
+                    btn_toggle = gr.Button("Toggle dark mode", variant="secondary")
+                    btn_toggle.click(
+                        None,
+                        js=constants.JS__DARK_MODE_TOGGLE,
+                    )
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
                     gr.Markdown("# Coding challenge")
@@ -190,7 +203,8 @@ class GradioApp:
                     with gr.Tab(label="Question preview"):
                         user_input_preview = gr.Markdown()
                     btn_ask = gr.Button(
-                        value="Ask",
+                        value="Let's code!",
+                        variant="primary",
                         elem_id="btn_ask",
                     )
                 with gr.Column(elem_id="ui_main_right"):
@@ -232,7 +246,7 @@ class GradioApp:
     def run(self):
         """Run the Gradio app by launching a server."""
         self.construct_interface()
-        self.interface.launch(
+        self.interface.queue().launch(
             server_name=self._gradio_host,
             server_port=self._gradio_port,
             show_api=True,
