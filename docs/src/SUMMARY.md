@@ -7,7 +7,7 @@
 # User guide
 
 - [Usage]()
-    - [Installation](guide/installation.md)
+    - [Setup]() <!-- guide/setup.md -->
         - [Python dependencies](guide/python.md)
         - [Containerisation](guide/container.md)
     - [Run]()
