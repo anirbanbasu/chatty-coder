@@ -17,7 +17,7 @@ import os
 from dotenv import load_dotenv
 from typing import Any
 
-from coder_agent import CoderAgent
+from coder_agent import CoderAgent, TestCase
 
 try:
     from icecream import ic
@@ -69,15 +69,15 @@ class GradioApp:
             self._llm = OllamaFunctions(
                 base_url=self.parse_env(
                     constants.ENV_VAR_NAME__LLM_OLLAMA_URL,
-                    constants.ENV_VAR_VALUE__LLM_OLLAMA_URL,
+                    default_value=constants.ENV_VAR_VALUE__LLM_OLLAMA_URL,
                 ),
                 model=self.parse_env(
                     constants.ENV_VAR_NAME__LLM_OLLAMA_MODEL,
-                    constants.ENV_VAR_VALUE__LLM_OLLAMA_MODEL,
+                    default_value=constants.ENV_VAR_VALUE__LLM_OLLAMA_MODEL,
                 ),
                 temperature=self.parse_env(
                     constants.ENV_VAR_NAME__LLM_TEMPERATURE,
-                    constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
+                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
                 format="json",
@@ -125,13 +125,16 @@ class GradioApp:
         )
         return value
 
-    def find_solution(self, user_question: str, runtime_limit: int):
+    def find_solution(
+        self, user_question: str, runtime_limit: int, test_cases: list[TestCase] = None
+    ):
         """
         Generator function to find a coding solution to the user question.
 
         Args:
             user_question (str): The user question to provide a solution for.
             runtime_limit (int): The runtime limit, in seconds, for executing the solution.
+            test_cases (list[TestCase], optional): The list of test cases to validate the solution against. Defaults to None.
 
         Yields:
             list[str, str, str]: A list containing the reasoning, pseudocode, and code for the solution.
@@ -166,6 +169,7 @@ class GradioApp:
                     content=user_question
                 ),
                 constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
+                constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
             },
             config=config,
             # stream_mode="values",
@@ -183,6 +187,30 @@ class GradioApp:
                     ai_message.tool_calls[0]["args"]["pseudocode"],
                     ai_message.tool_calls[0]["args"]["code"],
                 ]
+
+    def add_test_case(
+        self, test_cases: list[TestCase], test_case_in: str, test_case_out: str
+    ) -> list[TestCase]:
+        """
+        Add a test case to the list of test cases.
+
+        Args:
+            test_cases (list[TestCase]): The list of test cases to add the new test case to.
+            test_case_in (str): The input for the test case.
+            test_case_out (str): The expected output for the test case.
+
+        Returns:
+            list[TestCase]: The updated list of test cases.
+        """
+        if test_cases is None:
+            test_cases = []
+        test_cases.append(
+            {
+                constants.TEST_CASE__KEY_INPUTS: test_case_in,
+                constants.TEST_CASE__KEY_OUTPUTS: test_case_out,
+            }
+        )
+        return test_cases
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
@@ -225,6 +253,21 @@ class GradioApp:
                         step=1,
                         value=10,
                     )
+                    with gr.Row(equal_height=True):
+                        input_test_cases_in = gr.Textbox(label="Test case input")
+                        input_test_cases_out = gr.Textbox(label="Test case output")
+                        btn_add_test_case = gr.Button("Add test case")
+                    list_test_cases = gr.JSON(label="Test cases")
+                    btn_add_test_case.click(
+                        self.add_test_case,
+                        inputs=[
+                            list_test_cases,
+                            input_test_cases_in,
+                            input_test_cases_out,
+                        ],
+                        outputs=[list_test_cases],
+                        api_name=False,
+                    )
                     with gr.Tab(label="The coding question"):
                         input_user_question = gr.TextArea(
                             label="Question (in Markdown)",
@@ -257,7 +300,7 @@ class GradioApp:
             # Button actions
             btn_code.click(
                 self.find_solution,
-                inputs=[input_user_question, slider_runtime_limit],
+                inputs=[input_user_question, slider_runtime_limit, list_test_cases],
                 outputs=[output_reasoning, output_pseudocode, output_code],
                 api_name="get_coding_solution",
             )

@@ -52,6 +52,9 @@ AGENT_STATE__KEY_TEST_CASES = "test_cases"
 AGENT_STATE__KEY_RUNTIME_LIMIT = "runtime_limit"
 AGENT_STATE__KEY_STATUS = "status"
 
+AGENT_NODE__EVALUATE_STATUS_SUCCESS = "success"
+AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES = "no test cases"
+
 AGENT_TOOL_CALL__ARGS = "args"
 AGENT_TOOL_CALL__ID = "id"
 AGENT_TOOL_CALL__NAME_CODE_OUTPUT = "codeOutput"
@@ -102,7 +105,11 @@ Then write detailed, most time and space efficient, pseudocode to uncover any po
 The pseudocode must also be accompanied by a time and a space complexity analysis.
 The pseudocode should be output in Markdown format. If you need to display mathematical expressions, enclose them by the characters `$$`.
 Finally output the working Python code for your solution, ensuring to fix any errors uncovered while writing pseudocode.
-Always encapsulate your Python code in a class called `Solution`. Do not format the code as Markdown.
+Encapsulate your Python code in a class called `Solution`.
+Add a `main` method to the code that will run the code by instantiating an object of `Solution`.
+The `main` method must accept a single input passed on as a string argument.
+The output should only be the output of the function you wrote without any additional information. The output be printed to the console.
+Do not enclose the code using Markdown single or triple ticks.
 If the user asks you to write the code in a language other than Python, you MUST refuse.
 No outside libraries are allowed.
 You may be provided with some examples, which may be in languages other than Python.

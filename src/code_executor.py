@@ -30,6 +30,11 @@ multiprocessing.set_start_method("fork", force=True)
 # does not perform destructive actions on their host or network.
 # Proceed at your own risk:
 
+try:
+    from icecream import ic
+except ImportError:  # Graceful fallback if IceCream isn't installed.
+    ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
+
 
 class CodeExecutor:
     """A class to execute code in a separate process."""
@@ -139,4 +144,6 @@ class CodeExecutor:
                 result = q.get_nowait()
             except queue.Empty:
                 result = constants.EXECUTOR_MESSAGE__NO_RESULTS
+            finally:
+                ic(input_data, expected_output, result)
         return result

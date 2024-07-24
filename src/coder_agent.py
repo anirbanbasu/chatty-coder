@@ -212,15 +212,10 @@ class CoderAgent:
                     self.format_tool_message(repr(e), ai_message)
                 ]
             }
-        num_test_cases = len(test_cases)
+        num_test_cases = len(test_cases) if test_cases is not None else 0
         if num_test_cases == 0:
             return {
-                constants.AGENT_STATE__KEY_MESSAGES: [
-                    self.format_tool_message(
-                        "There are no test cases to evaluate the code.",
-                        ai_message,
-                    )
-                ]
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
             }
         succeeded = 0
         test_results = []
@@ -239,7 +234,9 @@ class CoderAgent:
                 succeeded += 1
         pass_rate = succeeded / num_test_cases if num_test_cases else "N/A"
         if pass_rate == 1:
-            return {constants.AGENT_STATE__KEY_STATUS: "success"}
+            return {
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
+            }
 
         responses = "\n".join(
             [f"<test id={i}>\n{r}\n</test>" for i, r in enumerate(test_results)]
@@ -257,21 +254,26 @@ class CoderAgent:
         # builder.add_node("draft", self.draft_solve)
         # builder.add_node("retrieve", self.retrieve_examples)
         builder.add_node("solve", self.solve)
-        # builder.add_node("evaluate", self.evaluate)
+        builder.add_node("evaluate", self.evaluate)
         # Add connectivity
         builder.add_edge(START, "solve")
         # builder.add_edge("draft", "retrieve")
         # builder.add_edge("retrieve", "solve")
-        # builder.add_edge("solve", "evaluate")
+        builder.add_edge("solve", "evaluate")
 
         def control_edge(state: AgentState):
-            if state.get("status") == "success":
+            if (
+                state.get(constants.AGENT_STATE__KEY_STATUS)
+                == constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
+                or state.get(constants.AGENT_STATE__KEY_STATUS)
+                == constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
+            ):
                 return END
             return "solve"
 
-        # builder.add_conditional_edges(
-        #     "evaluate", control_edge, {END: END, "solve": "solve"}
-        # )
+        builder.add_conditional_edges(
+            "evaluate", control_edge, {END: END, "solve": "solve"}
+        )
         builder.add_edge("solve", END)
         checkpointer = SqliteSaver.from_conn_string(":memory:")
         self.agent_graph = builder.compile(checkpointer=checkpointer, debug=False)
