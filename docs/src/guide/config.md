@@ -14,7 +14,13 @@ Notice that host and port variables listed below are not the same as the corresp
 ## General large language model (LLM) settings
 
 - `LLM__PROVIDER`: The provider for the language language models. Default value: `Ollama`. Possible values are: `Open AI`, `Cohere`, `Groq` and `Ollama`.
-- `LLM__TEMPERATURE`: The temperature value for the LLM to be used. Default value: `0.0`. The value should be a decimal number between `0` and `1` except if the provider is Open AI, for which the value can be between `0` and `2`. Parsed as non-string type: `float`.
+- `LLM__TEMPERATURE`: The temperature parameter for the LLM to be used. The value is usually a decimal number between `0` and `1` but the actual range depends on the model. For example, for Open AI models, the value can be between `0` and `2`. Default value: `0.4`. Parsed as non-string type: `float`.
+- `LLM__TOP_P`: The _top\_p_ paraeter for the LLM to be used, between `0` and `1`. Default value: `0.4`. Parsed as non-string type: `float`.
+- `LLM__TOP_K`: The _top\_k_ parameter for the LLM to be used. Default value: `40`. Parsed as non-string type: `int`.
+- `LLM__REPEAT_PENALTY`: The repeat penalty parameter for the LLM to be used. Default value: `1.1`. Parsed as non-string type: `float`.
+- `LLM__SEED`: The seed parameter for the LLM to be used. Default value: `1`. Parsed as non-string type: `int`.
+
+For details about these parameter settings, see the documentation of your chosen LLM provider, such as, the [Ollama documentation for the valid parameters and their values for model files](https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values).
 
 ## Language model specific settings
 
