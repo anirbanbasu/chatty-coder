@@ -110,6 +110,24 @@ class CoderAgent:
             </solution>"""
         return result
 
+    def format_test_cases(self, test_cases: list[TestCase]) -> str:
+        """
+        Format the test cases for the agent.
+
+        Args:
+            test_cases: The test cases to be formatted.
+
+        Returns:
+            str: The formatted test cases.
+        """
+        test_cases_str = "\n".join(
+            [
+                f"<test id={i}>\n{test_case}\n</test>"
+                for i, test_case in enumerate(test_cases)
+            ]
+        )
+        return f"<TestCases>\n{test_cases_str}\n<TestCases>"
+
     def retrieve_examples(self, state: AgentState, config: RunnableConfig) -> dict:
         """
         Retrieve examples of similar problems.
@@ -153,7 +171,6 @@ class CoderAgent:
         Returns:
             dict: The updated state of the agent.
         """
-        ic(state)
         # Get the inputs for the solver
         inputs = {
             constants.AGENT_STATE__KEY_MESSAGES: state[
@@ -162,6 +179,15 @@ class CoderAgent:
         }
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
+        # Have we been presented with test cases?
+        has_test_cases = bool(state.get(constants.AGENT_STATE__KEY_TEST_CASES))
+        if has_test_cases:
+            inputs[constants.AGENT_STATE__KEY_MESSAGES].append(
+                HumanMessage(
+                    f"Use the following test cases to ensure your code is correct.\n{self.format_test_cases(state[constants.AGENT_STATE__KEY_TEST_CASES])}"
+                )
+            )
+        ic(state)
         # If `draft`` is requested in the state then output a candidate solution
         output_key = (
             constants.AGENT_STATE__KEY_CANDIDATE
@@ -215,7 +241,7 @@ class CoderAgent:
         # Most tool-calling APIs require that the `ToolMessage` contain the ID
         # of the tool call that generated the message.
         return ToolMessage(
-            content=response + "\nMake all fixes using the codeOutput tool.",
+            content=response,
             tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
         )
 
@@ -243,9 +269,11 @@ class CoderAgent:
             }
         try:
             # Extract the code from the tool call.
-            code = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
+            code: str = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
                 constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
             ]
+            # FIXME: This is hacky. We should only replace the triple backticks at the start and the end of the code, nowhere in between.
+            code = code.replace("```", "")
         except Exception as e:
             # If there was an error extracting the code, return an error message as state.
             return {
@@ -282,7 +310,7 @@ class CoderAgent:
         responses = "\n".join(
             [f"<test id={i}>\n{r}\n</test>" for i, r in enumerate(test_results)]
         )
-        response = f"Incorrect submission. Please respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
+        response = f"Incorrect submission. Please review the failures reported below and respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
 
         return {
             constants.AGENT_STATE__KEY_MESSAGES: [
