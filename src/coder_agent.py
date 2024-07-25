@@ -110,53 +110,94 @@ class CoderAgent:
             </solution>"""
         return result
 
-    def retrieve_examples(self, state: AgentState, config: RunnableConfig):
+    def retrieve_examples(self, state: AgentState, config: RunnableConfig) -> dict:
+        """
+        Retrieve examples of similar problems.
+
+        Args:
+            state: The state of the agent.
+            config: The configuration of the agent.
+
+        Returns:
+            dict: The updated state of the agent.
+        """
+        # The number of examples to retrieve. Defaults to 2, if unspecified.
         top_k = config["configurable"].get("k") or 2
-        ai_message: AIMessage = state["candidate"]
+        # Find the solution by the draft solver
+        ai_message: AIMessage = state[constants.AGENT_STATE__KEY_CANDIDATE]
         if not ai_message.tool_calls:
             # We err here. To make more robust, you could loop back
             raise ValueError("Draft agent did not produce a valid code block")
-        code = ai_message.tool_calls[0]["args"]["code"]
+        code = ai_message.tool_calls[0]["args"][
+            constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
+        ]
         examples_str = "\n".join(
             [doc.page_content for doc in self._retriever.invoke(code)[:top_k]]
         )
         examples_str = f"""
-            You previously solved the following problems in this competition:
+            Here are some example solutions of similar problems.
             <Examples>
             {examples_str}
             <Examples>
             Approach this new question with similar sophistication."""
 
-        return {"examples": examples_str}
+        return {constants.AGENT_STATE__KEY_EXAMPLES: examples_str}
 
     def solve(self, state: AgentState) -> dict:
-        # The agent only can see the "messages" and will ignore the test info
+        """
+        Solve the problem presented in the `messages` key of the state.
+
+        Args:
+            state: The state of the agent.
+
+        Returns:
+            dict: The updated state of the agent.
+        """
         ic(state)
-        return {
-            "messages": [self._runnable_solver.invoke({"messages": state["messages"]})]
+        # Get the inputs for the solver
+        inputs = {
+            constants.AGENT_STATE__KEY_MESSAGES: state[
+                constants.AGENT_STATE__KEY_MESSAGES
+            ]
         }
-        # inputs = {"messages": state["messages"]}
-        # has_examples = bool(state.get("examples"))
-        # output_key = "candidate" if draft else "messages"  # Used in the draft node
-        # if has_examples:
-        #     output_key = "messages"
-        #     # Used in the solve node
-        #     inputs["examples"] = state["examples"]
-        # response = (
-        #     self._runnable_draft_solver.invoke(inputs)
-        #     if draft is True
-        #     else self._runnable_solver.invoke(inputs)
-        # )
+        # Have we been presented with examples?
+        has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
+        # If `draft`` is requested in the state then output a candidate solution
+        output_key = (
+            constants.AGENT_STATE__KEY_CANDIDATE
+            if state[constants.AGENT_STATE__KEY_DRAFT]
+            else constants.AGENT_STATE__KEY_MESSAGES
+        )
+        if has_examples:
+            output_key = constants.AGENT_STATE__KEY_MESSAGES
+            # Retrieve examples to solve the problem
+            inputs[constants.AGENT_STATE__KEY_EXAMPLES] = state[
+                constants.AGENT_STATE__KEY_EXAMPLES
+            ]
+        response = (
+            # Use the draft solver only if the `draft` flag is set in the state
+            self._runnable_draft_solver.invoke(inputs)
+            if state[constants.AGENT_STATE__KEY_DRAFT] is True
+            else self._runnable_solver.invoke(inputs)
+        )
+        # FIXME: Why do we need this? `OllamaFunctions`, for example, does not output `content`.
         # if not response.content:
         #     return {
         #         output_key: AIMessage(
         #             content="I'll need to think about this step by step."
         #         )
         #     }
-        # return {output_key: response}
+        return (
+            {
+                output_key: [response],
+                constants.AGENT_STATE__KEY_DRAFT: (False),
+            }
+            if state[constants.AGENT_STATE__KEY_DRAFT]
+            else {output_key: [response]}
+        )
 
     def draft_solve(self, state: AgentState) -> dict:
-        state["draft"] = True
+        state[constants.AGENT_STATE__KEY_DRAFT] = True
         return self.solve(state)
 
     def format_tool_message(self, response: str, ai_message: AIMessage) -> ToolMessage:
@@ -178,7 +219,7 @@ class CoderAgent:
             tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
         )
 
-    def evaluate(self, state: AgentState):
+    def evaluate(self, state: AgentState) -> dict:
         """
         Evaluate the correctness of the code.
 

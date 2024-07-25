@@ -320,6 +320,7 @@ class GradioApp:
             btn_theme_toggle.click(
                 None,
                 js=constants.JS__DARK_MODE_TOGGLE,
+                api_name=False,
             )
 
             btn_code.click(
@@ -343,6 +344,7 @@ class GradioApp:
                 self.delete_test_case,
                 inputs=[list_test_cases, test_case_id_to_delete],
                 outputs=[list_test_cases],
+                api_name=False,
             )
 
             # Automatically generate preview the user input as Markdown
