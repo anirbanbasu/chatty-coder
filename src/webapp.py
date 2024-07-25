@@ -212,12 +212,31 @@ class GradioApp:
         )
         return test_cases
 
+    def delete_test_case(
+        self, test_cases: list[TestCase], test_case_id: int
+    ) -> list[TestCase]:
+        """
+        Delete a test case from the list of test cases.
+
+        Args:
+            test_cases (list[TestCase]): The list of test cases to delete the test case from.
+            test_case_id (int): The ID of the test case to delete.
+
+        Returns:
+            list[TestCase]: The updated list of test cases.
+        """
+        if test_cases is not None and test_case_id in range(0, len(test_cases)):
+            test_cases.pop(test_case_id)
+        return test_cases
+
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
         with gr.Blocks(
             # See theming guide at https://www.gradio.app/guides/theming-guide
             # theme="gstaff/xkcd",
-            theme="derekzen/stardust",
+            # theme="derekzen/stardust",
+            # theme="bethecloud/storj_theme",
+            theme="abidlabs/Lime",
             css=constants.CSS__GRADIO_APP,
             analytics_enabled=False,
         ) as self.interface:
@@ -234,39 +253,13 @@ class GradioApp:
                         """,
                     )
                 with gr.Column(scale=3):
-                    btn_toggle = gr.Button("Toggle dark mode")
-                    btn_toggle.click(
-                        None,
-                        js=constants.JS__DARK_MODE_TOGGLE,
-                    )
+                    btn_theme_toggle = gr.Button("Toggle dark mode")
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
                     gr.Markdown("# Coding challenge")
                     btn_code = gr.Button(
                         value="Let's code!",
                         variant="primary",
-                    )
-                    slider_runtime_limit = gr.Slider(
-                        label="Runtime limit (in seconds)",
-                        minimum=5,
-                        maximum=35,
-                        step=1,
-                        value=10,
-                    )
-                    with gr.Row(equal_height=True):
-                        input_test_cases_in = gr.Textbox(label="Test case input")
-                        input_test_cases_out = gr.Textbox(label="Test case output")
-                        btn_add_test_case = gr.Button("Add test case")
-                    list_test_cases = gr.JSON(label="Test cases")
-                    btn_add_test_case.click(
-                        self.add_test_case,
-                        inputs=[
-                            list_test_cases,
-                            input_test_cases_in,
-                            input_test_cases_out,
-                        ],
-                        outputs=[list_test_cases],
-                        api_name=False,
                     )
                     with gr.Tab(label="The coding question"):
                         input_user_question = gr.TextArea(
@@ -277,6 +270,32 @@ class GradioApp:
                         )
                     with gr.Tab(label="Question preview"):
                         user_input_preview = gr.Markdown()
+                    with gr.Accordion(label="Code evaluation", open=False):
+                        with gr.Row(equal_height=True):
+                            input_test_cases_in = gr.Textbox(
+                                label="Test case input", scale=1
+                            )
+                            input_test_cases_out = gr.Textbox(
+                                label="Test case output", scale=1
+                            )
+                            btn_add_test_case = gr.Button("Add", scale=1)
+                        list_test_cases = gr.JSON(label="Test cases")
+                        with gr.Row(equal_height=True):
+                            test_case_id_to_delete = gr.Number(
+                                label="Test case ID to delete",
+                                minimum=0,
+                                scale=2,
+                            )
+                            btn_delete_test_case = gr.Button(
+                                "Delete", variant="stop", scale=1
+                            )
+                        slider_runtime_limit = gr.Slider(
+                            label="Runtime limit (in seconds)",
+                            minimum=5,
+                            maximum=35,
+                            step=1,
+                            value=10,
+                        )
                 with gr.Column(elem_id="ui_main_right"):
                     gr.Markdown(
                         f"""# Solution
@@ -298,11 +317,32 @@ class GradioApp:
                         language="python",
                     )
             # Button actions
+            btn_theme_toggle.click(
+                None,
+                js=constants.JS__DARK_MODE_TOGGLE,
+            )
+
             btn_code.click(
                 self.find_solution,
                 inputs=[input_user_question, slider_runtime_limit, list_test_cases],
                 outputs=[output_reasoning, output_pseudocode, output_code],
                 api_name="get_coding_solution",
+            )
+
+            btn_add_test_case.click(
+                self.add_test_case,
+                inputs=[
+                    list_test_cases,
+                    input_test_cases_in,
+                    input_test_cases_out,
+                ],
+                outputs=[list_test_cases],
+                api_name=False,
+            )
+            btn_delete_test_case.click(
+                self.delete_test_case,
+                inputs=[list_test_cases, test_case_id_to_delete],
+                outputs=[list_test_cases],
             )
 
             # Automatically generate preview the user input as Markdown
