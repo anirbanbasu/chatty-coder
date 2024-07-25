@@ -80,6 +80,26 @@ class GradioApp:
                     default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
+                top_p=self.parse_env(
+                    constants.ENV_VAR_NAME__LLM_TOP_P,
+                    default_value=constants.ENV_VAR_VALUE__LLM_TOP_P,
+                    type_cast=float,
+                ),
+                top_k=self.parse_env(
+                    constants.ENV_VAR_NAME__LLM_TOP_K,
+                    default_value=constants.ENV_VAR_VALUE__LLM_TOP_K,
+                    type_cast=int,
+                ),
+                repeat_penalty=self.parse_env(
+                    constants.ENV_VAR_NAME__LLM_REPEAT_PENALTY,
+                    default_value=constants.ENV_VAR_VALUE__LLM_REPEAT_PENALTY,
+                    type_cast=float,
+                ),
+                seed=self.parse_env(
+                    constants.ENV_VAR_NAME__LLM_SEED,
+                    default_value=constants.ENV_VAR_VALUE__LLM_SEED,
+                    type_cast=int,
+                ),
                 format="json",
             )
         else:

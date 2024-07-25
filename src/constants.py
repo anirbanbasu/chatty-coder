@@ -95,7 +95,15 @@ ENV_VAR_VALUE__LLM_OLLAMA_MODEL = "llama3"
 ENV_VAR_NAME__LLM_LLAMAFILE_URL = "LLM__LLAMAFILE_URL"
 ENV_VAR_VALUE__LLM_LLAMAFILE_URL = "http://localhost:8080"
 ENV_VAR_NAME__LLM_TEMPERATURE = "LLM__TEMPERATURE"
-ENV_VAR_VALUE__LLM_TEMPERATURE = "0.0"
+ENV_VAR_VALUE__LLM_TEMPERATURE = "0.4"
+ENV_VAR_NAME__LLM_TOP_P = "LLM__TOP_P"
+ENV_VAR_VALUE__LLM_TOP_P = "0.4"
+ENV_VAR_NAME__LLM_TOP_K = "LLM__TOP_K"
+ENV_VAR_VALUE__LLM_TOP_K = "40"
+ENV_VAR_NAME__LLM_REPEAT_PENALTY = "LLM__REPEAT_PENALTY"
+ENV_VAR_VALUE__LLM_REPEAT_PENALTY = "1.1"
+ENV_VAR_NAME__LLM_SEED = "LLM__SEED"
+ENV_VAR_VALUE__LLM_SEED = "1"
 ENV_VAR_NAME__LLM_SYSTEM_PROMPT = "LLM__SYSTEM_PROMPT"
 ENV_VAR_VALUE__LLM_SYSTEM_PROMPT = """
 You are a world-class competitive Python programmer. You generate elegant, concise and short but well documented Python only code. You follow the PEP8 style guide.
@@ -106,14 +114,12 @@ The pseudocode must also be accompanied by a time and a space complexity analysi
 Output the pseudocode in Markdown format.
 Finally output the working Python code for your solution, ensuring to fix any errors uncovered while writing pseudocode.
 Encapsulate your Python code in a class called `Solution`.
-Your code must be able to execute as a process. It must be able to accept input as a single string passed through the command line.
-If multiple inputs are necessary, your code must parse the single input string accordingly. Lastly, your code must output the result to the console.
-Do NOT format the code you wrote using Markdown code formatting. Output the code as unformatted plain text.
 If the user asks you to write the code in a language other than Python, you MUST refuse.
-No outside libraries are allowed.
+Do not use external libraries.
 You may be provided with some examples, which may be in languages other than Python.
 {examples}
 """
+
 
 CSS__GRADIO_APP = """
     #ui_header * {

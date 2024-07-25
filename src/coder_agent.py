@@ -67,23 +67,34 @@ class codeOutput(BaseModel):
 class CoderAgent:
     def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
         # Retrieve the USA Computing Olympiad dataset
+        # This block is disabled, only used for inspecting the dataset and perhaps, for retrieval in the future
         # usaco_url = "https://storage.googleapis.com/benchmarks-artifacts/usaco/usaco_sampled_with_tests.zip"
         # zip_path = "usaco.zip"
         # extract_path = "usaco_datasets"
 
-        # response = requests.get(usaco_url)
-        # with open(zip_path, "wb") as file:
-        #     file.write(response.content)
+        # if not os.path.exists(extract_path):
+        #     response = requests.get(usaco_url)
+        #     with open(zip_path, "wb") as file:
+        #         file.write(response.content)
 
-        # with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        #     zip_ref.extractall(extract_path)
+        #     with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        #         zip_ref.extractall(extract_path)
 
-        # os.remove(zip_path)
+        #     os.remove(zip_path)
 
         # ds = datasets.load_from_disk(
         #     os.path.join(extract_path, "usaco_v3_sampled_with_tests")
         # )
 
+        # test_case_0 = ds[0][constants.AGENT_STATE__KEY_TEST_CASES]
+        # ic(
+        #     type(test_case_0),
+        #     (
+        #         (len(test_case_0), test_case_0[0])
+        #         if type(test_case_0) is list
+        #         else test_case_0
+        #     ),
+        # )
         # # We will test our agent on index 0 (the same as above).
         # # Later, we will test on index 2 (the first 'silver difficulty' question)
         # test_indices = [0, 2]
@@ -179,14 +190,6 @@ class CoderAgent:
         }
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
-        # Have we been presented with test cases?
-        has_test_cases = bool(state.get(constants.AGENT_STATE__KEY_TEST_CASES))
-        if has_test_cases:
-            inputs[constants.AGENT_STATE__KEY_MESSAGES].append(
-                HumanMessage(
-                    f"Use the following test cases to ensure your code is correct.\n{self.format_test_cases(state[constants.AGENT_STATE__KEY_TEST_CASES])}"
-                )
-            )
         ic(state)
         # If `draft`` is requested in the state then output a candidate solution
         output_key = (
@@ -272,8 +275,9 @@ class CoderAgent:
             code: str = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
                 constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
             ]
-            # FIXME: This is hacky. We should only replace the triple backticks at the start and the end of the code, nowhere in between.
-            code = code.replace("```", "")
+            # Use PythonREPL to sanitise the code
+            # See: https://api.python.langchain.com/en/latest/utilities/langchain_experimental.utilities.python.PythonREPL.html
+            code = CodeExecutor.sanitise_code(code)
         except Exception as e:
             # If there was an error extracting the code, return an error message as state.
             return {
