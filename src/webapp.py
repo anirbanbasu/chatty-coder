@@ -24,7 +24,7 @@ try:
 except ImportError:  # Graceful fallback if IceCream isn't installed.
     ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
-from langchain_experimental.llms.ollama_functions import OllamaFunctions
+from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph.message import AnyMessage
 
@@ -66,7 +66,7 @@ class GradioApp:
             default_value=constants.ENV_VAR_VALUE__LLM_PROVIDER,
         )
         if self._llm_provider == "Ollama":
-            self._llm = OllamaFunctions(
+            self._llm = ChatOllama(
                 base_url=self.parse_env(
                     constants.ENV_VAR_NAME__LLM_OLLAMA_URL,
                     default_value=constants.ENV_VAR_VALUE__LLM_OLLAMA_URL,

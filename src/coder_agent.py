@@ -56,8 +56,7 @@ class AgentState(TypedDict):
 
 
 class codeOutput(BaseModel):
-    """Pydantic model with reasoning, pseudocode and Python code
-    that represent the solution to the given problem."""
+    """Output Python code to solve the given problem."""
 
     reasoning: str = Field(..., description="Conceptual solution.")
     pseudocode: str = Field(..., description="Detailed pseudocode in English.")

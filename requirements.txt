@@ -13,6 +13,7 @@ langchain-experimental
 langchain
 langchainhub
 langchain_groq
+langchain-ollama
 rank_bm25
 
 # User interface
