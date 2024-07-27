@@ -13,6 +13,8 @@ langchain-experimental
 langchain
 langchainhub
 langchain_groq
+langchain-openai
+langchain-cohere
 langchain-ollama
 rank_bm25
 
