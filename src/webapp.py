@@ -26,9 +26,10 @@ except ImportError:  # Graceful fallback if IceCream isn't installed.
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_ollama import ChatOllama
-from langchain_groq.chat_models import ChatGroq
-from langchain_cohere.chat_models import ChatCohere
-from langchain_openai.chat_models import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_groq import ChatGroq
+from langchain_cohere import ChatCohere
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph.message import AnyMessage
 
@@ -145,6 +146,19 @@ class GradioApp:
                 # streaming=False,
                 # JSON response is not compatible with tool calling
                 # response_format={"type": "json_object"},
+            )
+        elif self._llm_provider == "Anthropic":
+            self._llm = ChatAnthropic(
+                api_key=self.parse_env(constants.ENV_VAR_NAME__LLM_ANTHROPIC_API_KEY),
+                model=self.parse_env(
+                    constants.ENV_VAR_NAME__LLM_ANTHROPIC_MODEL,
+                    default_value=constants.ENV_VAR_VALUE__LLM_ANTHROPIC_MODEL,
+                ),
+                temperature=self.parse_env(
+                    constants.ENV_VAR_NAME__LLM_TEMPERATURE,
+                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
+                    type_cast=float,
+                ),
             )
         elif self._llm_provider == "Cohere":
             self._llm = ChatCohere(

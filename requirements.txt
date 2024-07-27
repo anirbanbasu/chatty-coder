@@ -12,6 +12,7 @@ langchain_community
 langchain-experimental
 langchain
 langchainhub
+langchain_anthropic
 langchain_groq
 langchain-openai
 langchain-cohere
