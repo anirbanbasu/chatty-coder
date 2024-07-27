@@ -20,7 +20,7 @@ Notice that host and port variables listed below are not the same as the corresp
 - `LLM__REPEAT_PENALTY`: The repeat penalty parameter for the LLM to be used. Default value: `1.1`. Parsed as non-string type: `float`.
 - `LLM__SEED`: The seed parameter for the LLM to be used. Default value: `1`. Parsed as non-string type: `int`.
 
-For details about these parameter settings, see the documentation of your chosen LLM provider, such as, the [Ollama documentation for the valid parameters and their values for model files](https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values).
+For details about these parameter settings, see the documentation of your chosen LLM provider, such as, the [Ollama documentation for the valid parameters and their values for model files](https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values). Note that for language model providers other than Ollama, all model parameter settings apart from `LLM__TEMPERATURE` are ignored.
 
 ## Language model specific settings
 
