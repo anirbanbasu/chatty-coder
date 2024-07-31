@@ -170,3 +170,7 @@ flagged/
 # mdBook output
 docs/book/
 docs/index.html
+
+# Random tmp files
+tmp/
+tmp*
