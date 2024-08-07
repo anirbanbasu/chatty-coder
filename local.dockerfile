@@ -34,7 +34,7 @@ COPY ./requirements.txt ./requirements.txt
 ENV VIRTUAL_ENV="$HOME/app/venv"
 RUN python -m venv $VIRTUAL_ENV
 RUN $VIRTUAL_ENV/bin/python -m ensurepip
-RUN $VIRTUAL_ENV/bin/pip install --no-cache-dir --upgrade pip setuptools
+RUN $VIRTUAL_ENV/bin/pip install --no-cache-dir --upgrade pip
 
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 

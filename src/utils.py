@@ -19,7 +19,6 @@ import constants
 
 
 def parse_env(
-    self,
     var_name: str,
     default_value: str | None = None,
     type_cast=str,
