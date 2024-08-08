@@ -6,18 +6,27 @@ python-dotenv
 icecream
 pytest
 
-# LangChain and LangGraph
-langgraph
-langchain_community
-langchain-experimental
-langchain
-langchainhub
-langchain_anthropic
-langchain_groq
-langchain-openai
-langchain-cohere
-langchain-ollama
-rank_bm25
+# LangChain and LangGraph -- deprecated as of August 8, 2024.
+# langgraph
+# langchain_community
+# langchain-experimental
+# langchain
+# langchainhub
+# langchain_anthropic
+# langchain_groq
+# langchain-openai
+# langchain-cohere
+# langchain-ollama
+# rank_bm25
+
+# LlamaIndex
+llama-index
+llama-index-llms-openai
+llama-index-llms-cohere
+llama-index-llms-ollama
+llama-index-llms-anthropic
+llama-index-llms-groq
+ollama
 
 # User interface
 gradio

@@ -23,22 +23,15 @@ try:
 except ImportError:  # Graceful fallback if IceCream isn't installed.
     ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_ollama import ChatOllama
-from langchain_anthropic import ChatAnthropic
-from langchain_groq import ChatGroq
-from langchain_cohere import ChatCohere
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
-from langgraph.graph.message import AnyMessage
+from llama_index.core.llms.function_calling import FunctionCallingLLM
+from llama_index.llms.ollama import Ollama
+from llama_index.llms.anthropic import Anthropic
 
-# from langchain_groq.chat_models import ChatGroq
-# from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    MessagesPlaceholder,
-)
+from llama_index.llms.groq import Groq
+from llama_index.llms.cohere import Cohere
+from llama_index.llms.openai import OpenAI
+
+from llama_index.core.llms import ChatMessage, MessageRole
 
 import gradio as gr
 import constants
@@ -51,7 +44,7 @@ class GradioApp:
     """The main Gradio app class."""
 
     _gr_state_user_input_text = gr.State(constants.EMPTY_STRING)
-    _llm: BaseChatModel = None
+    _llm: FunctionCallingLLM = None
 
     def __init__(self):
         """Default constructor for the Gradio app."""
@@ -71,7 +64,7 @@ class GradioApp:
             default_value=constants.ENV_VAR_VALUE__LLM_PROVIDER,
         )
         if self._llm_provider == "Ollama":
-            self._llm = ChatOllama(
+            self._llm = Ollama(
                 base_url=parse_env(
                     constants.ENV_VAR_NAME__LLM_OLLAMA_URL,
                     default_value=constants.ENV_VAR_VALUE__LLM_OLLAMA_URL,
@@ -105,10 +98,10 @@ class GradioApp:
                     default_value=constants.ENV_VAR_VALUE__LLM_SEED,
                     type_cast=int,
                 ),
-                format="json",
+                json_mode=True,
             )
         elif self._llm_provider == "Groq":
-            self._llm = ChatGroq(
+            self._llm = Groq(
                 api_key=parse_env(constants.ENV_VAR_NAME__LLM_GROQ_API_KEY),
                 model=parse_env(
                     constants.ENV_VAR_NAME__LLM_GROQ_MODEL,
@@ -119,35 +112,9 @@ class GradioApp:
                     default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
-                # model_kwargs={
-                #     "top_p": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_TOP_P,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_TOP_P,
-                #         type_cast=float,
-                #     ),
-                #     "top_k": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_TOP_K,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_TOP_K,
-                #         type_cast=int,
-                #     ),
-                #     "repeat_penalty": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_REPEAT_PENALTY,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_REPEAT_PENALTY,
-                #         type_cast=float,
-                #     ),
-                #     "seed": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_SEED,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_SEED,
-                #         type_cast=int,
-                #     ),
-                # },
-                # Streaming is not compatible with JSON
-                # streaming=False,
-                # JSON response is not compatible with tool calling
-                # response_format={"type": "json_object"},
             )
         elif self._llm_provider == "Anthropic":
-            self._llm = ChatAnthropic(
+            self._llm = Anthropic(
                 api_key=parse_env(constants.ENV_VAR_NAME__LLM_ANTHROPIC_API_KEY),
                 model=parse_env(
                     constants.ENV_VAR_NAME__LLM_ANTHROPIC_MODEL,
@@ -160,8 +127,8 @@ class GradioApp:
                 ),
             )
         elif self._llm_provider == "Cohere":
-            self._llm = ChatCohere(
-                cohere_api_key=parse_env(constants.ENV_VAR_NAME__LLM_COHERE_API_KEY),
+            self._llm = Cohere(
+                api_key=parse_env(constants.ENV_VAR_NAME__LLM_COHERE_API_KEY),
                 model=parse_env(
                     constants.ENV_VAR_NAME__LLM_COHERE_MODEL,
                     default_value=constants.ENV_VAR_VALUE__LLM_COHERE_MODEL,
@@ -173,7 +140,7 @@ class GradioApp:
                 ),
             )
         elif self._llm_provider == "Open AI":
-            self._llm = ChatOpenAI(
+            self._llm = OpenAI(
                 api_key=parse_env(constants.ENV_VAR_NAME__LLM_OPENAI_API_KEY),
                 model=parse_env(
                     constants.ENV_VAR_NAME__LLM_OPENAI_MODEL,
@@ -187,9 +154,16 @@ class GradioApp:
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {self._llm_provider}")
+        self._llm.system_prompt = ChatMessage(
+            role=MessageRole.SYSTEM,
+            content=parse_env(
+                constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
+                constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
+            ),
+        )
         ic(self._llm_provider, self._llm)
 
-    def find_solution(
+    async def find_solution(
         self, user_question: str, runtime_limit: int, test_cases: list[TestCase] = None
     ):
         """
@@ -203,54 +177,32 @@ class GradioApp:
         Yields:
             list[str, str, str]: A list containing the reasoning, pseudocode, and code for the solution.
         """
-        prompt = ChatPromptTemplate(
-            input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
-            input_types={constants.PROMPT_TEMPLATE__VAR_MESSAGES: AnyMessage},
-            partial_variables={
-                constants.PROMPT_TEMPLATE__PARTIAL_VAR__EXAMPLES: constants.EMPTY_STRING
-            },
-            messages=[
-                SystemMessagePromptTemplate.from_template(
-                    template=parse_env(
-                        constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
-                        constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
-                    )
-                ),
-                MessagesPlaceholder(
-                    variable_name=constants.PROMPT_TEMPLATE__VAR_MESSAGES
-                ),
-            ],
-        )
-        ic(prompt)
-        coder_agent = CoderAgent(llm=self._llm, prompt=prompt)
-        coder_agent.build_agent_graph()
-        config = {"configurable": {"thread_id": "1", "k": 3}}
-        # FIXME: Stream mode is not working as expected. Need to improve.
-        # Note that this streams the results by graph step, not by individual messages.
-        result_iterator = coder_agent.agent_graph.stream(
-            input={
-                constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(
-                    content=user_question
-                ),
-                constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
-                constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
-            },
-            config=config,
-            # stream_mode="values",
-        )
-        for result in result_iterator:
-            ic(result)
-            if "solve" in result:
-                ai_message: AIMessage = result["solve"][
-                    constants.AGENT_STATE__KEY_MESSAGES
-                ][-1]
-                if ai_message.tool_calls:
-                    # raise ValueError("Coding agent did not produce a valid code block")
-                    yield [
-                        ai_message.tool_calls[0]["args"]["reasoning"],
-                        ai_message.tool_calls[0]["args"]["pseudocode"],
-                        ai_message.tool_calls[0]["args"]["code"],
-                    ]
+        # prompt = ChatPromptTemplate(
+        #     input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
+        #     input_types={constants.PROMPT_TEMPLATE__VAR_MESSAGES: AnyMessage},
+        #     partial_variables={
+        #         constants.PROMPT_TEMPLATE__PARTIAL_VAR__EXAMPLES: constants.EMPTY_STRING
+        #     },
+        #     messages=[
+        #         SystemMessagePromptTemplate.from_template(
+        #             template=parse_env(
+        #                 constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
+        #                 constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
+        #             )
+        #         ),
+        #         MessagesPlaceholder(
+        #             variable_name=constants.PROMPT_TEMPLATE__VAR_MESSAGES
+        #         ),
+        #     ],
+        # )
+        coder_agent = CoderAgent(llm=self._llm, timeout=runtime_limit, verbose=True)
+        result = await coder_agent.run(input=user_question, test_cases=test_cases)
+        ic(result)
+        yield [
+            "Reasoning",
+            "Pseudocode",
+            "Code",
+        ]
 
     def add_test_case(
         self, test_cases: list[TestCase], test_case_in: str, test_case_out: str

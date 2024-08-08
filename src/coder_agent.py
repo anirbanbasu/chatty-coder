@@ -13,20 +13,20 @@
 # limitations under the License.
 
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
-from typing import Annotated
+from typing import Any
+from llama_index.core.tools import FunctionTool
+from llama_index.core.llms.function_calling import FunctionCallingLLM
+from llama_index.core.memory import ChatMemoryBuffer
+from llama_index.core.workflow import Workflow, StartEvent, StopEvent, step
+
+from llama_index.core.llms import ChatMessage
+from llama_index.core.tools import ToolSelection, ToolOutput
+from llama_index.core.workflow import Event
 
 from typing_extensions import TypedDict
 
-from langgraph.graph.message import AnyMessage, add_messages
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
 
 from code_executor import CodeExecutor
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.graph import END, StateGraph, START
 
 import constants
 
@@ -41,73 +41,118 @@ class TestCase(TypedDict):
     outputs: str
 
 
-class AgentState(TypedDict):
-    # Candidate solution to the problem.
-    candidate: AIMessage
-    # Few shot examples.
-    examples: str
-    # Append-only chat memory so the agent can try to recover from initial mistakes.
-    messages: Annotated[list[AnyMessage], add_messages]
-    # These test cases are used for testing the solution.
-    test_cases: list[TestCase]
-    runtime_limit: int
-    status: str
-    draft: bool = False
+class InputEvent(Event):
+    input: list[ChatMessage]
+    test_cases: list[TestCase] = None
 
 
-class codeOutput(BaseModel):
-    """Output Python code to solve the given problem."""
-
-    reasoning: str = Field(..., description="Conceptual solution.")
-    pseudocode: str = Field(..., description="Detailed pseudocode in English.")
-    code: str = Field(..., description="Valid solution to the problem in Python code.")
+class ToolCallEvent(Event):
+    tool_calls: list[ToolSelection]
 
 
-class CoderAgent:
-    def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
-        # Retrieve the USA Computing Olympiad dataset
-        # This block is disabled, only used for inspecting the dataset and perhaps, for retrieval in the future
-        # usaco_url = "https://storage.googleapis.com/benchmarks-artifacts/usaco/usaco_sampled_with_tests.zip"
-        # zip_path = "usaco.zip"
-        # extract_path = "usaco_datasets"
+class FunctionOutputEvent(Event):
+    output: ToolOutput
 
-        # if not os.path.exists(extract_path):
-        #     response = requests.get(usaco_url)
-        #     with open(zip_path, "wb") as file:
-        #         file.write(response.content)
 
-        #     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        #         zip_ref.extractall(extract_path)
+class CoderAgent(Workflow):
+    def __init__(
+        self,
+        llm: FunctionCallingLLM,
+        *args: Any,
+        **kwargs: Any,
+    ):
+        super().__init__(*args, **kwargs)
 
-        #     os.remove(zip_path)
+        self.llm = llm
+        assert self.llm.metadata.is_function_calling_model
 
-        # ds = datasets.load_from_disk(
-        #     os.path.join(extract_path, "usaco_v3_sampled_with_tests")
-        # )
+        self.tools = [FunctionTool.from_defaults(self.evaluate)]
 
-        # test_case_0 = ds[0][constants.AGENT_STATE__KEY_TEST_CASES]
-        # ic(
-        #     type(test_case_0),
-        #     (
-        #         (len(test_case_0), test_case_0[0])
-        #         if type(test_case_0) is list
-        #         else test_case_0
-        #     ),
-        # )
-        # # We will test our agent on index 0 (the same as above).
-        # # Later, we will test on index 2 (the first 'silver difficulty' question)
-        # test_indices = [0, 2]
-        # train_ds = [row for i, row in enumerate(ds) if i not in test_indices]
-        # test_ds = [row for i, row in enumerate(ds) if i in test_indices]
+        self.memory = ChatMemoryBuffer.from_defaults(llm=llm)
+        self.sources = []
 
-        self._llm = llm
-        self._prompt = prompt
-        self._runnable_solver = self._prompt | self._llm.bind_tools([codeOutput])
-        self._runnable_draft_solver = self._prompt | self._llm.bind_tools([codeOutput])
-        self._evaluator = CodeExecutor()
-        # self._retriever = BM25Retriever.from_texts(
-        #     [self.format_example(row) for row in train_ds]
-        # )
+    @step()
+    async def prepare_chat_history(self, ev: StartEvent) -> InputEvent:
+        # clear sources
+        self.sources = []
+
+        # get user input
+        user_input = ev.input
+        user_msg = ChatMessage(role="user", content=user_input)
+        self.memory.put(user_msg)
+
+        # get chat history
+        chat_history = self.memory.get()
+        return InputEvent(input=chat_history)
+
+    @step()
+    async def handle_llm_input(self, ev: InputEvent) -> ToolCallEvent | StopEvent:
+        ic(ev)
+        chat_history = ev.input
+
+        response = await self.llm.achat_with_tools(
+            self.tools, chat_history=chat_history
+        )
+        self.memory.put(response.message)
+
+        tool_calls = self.llm.get_tool_calls_from_response(
+            response, error_on_no_tool_call=False
+        )
+
+        if not tool_calls:
+            return StopEvent(result={"response": response, "sources": [*self.sources]})
+        else:
+            return ToolCallEvent(tool_calls=tool_calls)
+
+    @step()
+    async def handle_tool_calls(self, ev: ToolCallEvent) -> InputEvent:
+        ic(ev)
+        tool_calls = ev.tool_calls
+        tools_by_name = {tool.metadata.get_name(): tool for tool in self.tools}
+
+        tool_msgs = []
+
+        # call tools -- safely!
+        for tool_call in tool_calls:
+            tool = tools_by_name.get(tool_call.tool_name)
+            additional_kwargs = {
+                "tool_call_id": tool_call.tool_id,
+                "name": tool.metadata.get_name(),
+            }
+            if not tool:
+                tool_msgs.append(
+                    ChatMessage(
+                        role="tool",
+                        content=f"Tool {tool_call.tool_name} does not exist",
+                        additional_kwargs=additional_kwargs,
+                    )
+                )
+                continue
+
+            try:
+                tool_output = tool(**tool_call.tool_kwargs)
+                self.sources.append(tool_output)
+                tool_msgs.append(
+                    ChatMessage(
+                        role="tool",
+                        content=tool_output.content,
+                        additional_kwargs=additional_kwargs,
+                    )
+                )
+            except Exception as e:
+                tool_msgs.append(
+                    ChatMessage(
+                        role="tool",
+                        content=f"Encountered error in tool call: {e}",
+                        additional_kwargs=additional_kwargs,
+                    )
+                )
+
+        for msg in tool_msgs:
+            self.memory.put(msg)
+
+        chat_history = self.memory.get()
+        return InputEvent(input=chat_history)
 
     def format_example(self, row):
         question = row["description"]
@@ -138,214 +183,47 @@ class CoderAgent:
         )
         return f"<TestCases>\n{test_cases_str}\n<TestCases>"
 
-    def retrieve_examples(self, state: AgentState, config: RunnableConfig) -> dict:
-        """
-        Retrieve examples of similar problems.
-
-        Args:
-            state: The state of the agent.
-            config: The configuration of the agent.
-
-        Returns:
-            dict: The updated state of the agent.
-        """
-        # The number of examples to retrieve. Defaults to 2, if unspecified.
-        top_k = config["configurable"].get("k") or 2
-        # Find the solution by the draft solver
-        ai_message: AIMessage = state[constants.AGENT_STATE__KEY_CANDIDATE]
-        if not ai_message.tool_calls:
-            # We err here. To make more robust, you could loop back
-            raise ValueError("Draft agent did not produce a valid code block")
-        code = ai_message.tool_calls[0]["args"][
-            constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
-        ]
-        examples_str = "\n".join(
-            [doc.page_content for doc in self._retriever.invoke(code)[:top_k]]
-        )
-        examples_str = f"""
-            Here are some example solutions of similar problems.
-            <Examples>
-            {examples_str}
-            <Examples>
-            Approach this new question with similar sophistication."""
-
-        return {constants.AGENT_STATE__KEY_EXAMPLES: examples_str}
-
-    def solve(self, state: AgentState) -> dict:
-        """
-        Solve the problem presented in the `messages` key of the state.
-
-        Args:
-            state: The state of the agent.
-
-        Returns:
-            dict: The updated state of the agent.
-        """
-        # Get the inputs for the solver
-        inputs = {
-            constants.AGENT_STATE__KEY_MESSAGES: state[
-                constants.AGENT_STATE__KEY_MESSAGES
-            ]
-        }
-        # Have we been presented with examples?
-        has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
-        ic(state)
-        # If `draft`` is requested in the state then output a candidate solution
-        output_key = (
-            constants.AGENT_STATE__KEY_CANDIDATE
-            if state[constants.AGENT_STATE__KEY_DRAFT]
-            else constants.AGENT_STATE__KEY_MESSAGES
-        )
-        if has_examples:
-            output_key = constants.AGENT_STATE__KEY_MESSAGES
-            # Retrieve examples to solve the problem
-            inputs[constants.AGENT_STATE__KEY_EXAMPLES] = state[
-                constants.AGENT_STATE__KEY_EXAMPLES
-            ]
-        response = (
-            # Use the draft solver only if the `draft` flag is set in the state
-            self._runnable_draft_solver.invoke(inputs)
-            if state[constants.AGENT_STATE__KEY_DRAFT] is True
-            else self._runnable_solver.invoke(inputs)
-        )
-        # FIXME: Why do we need this? `OllamaFunctions`, for example, does not output `content`.
-        # if not response.content:
-        #     return {
-        #         output_key: AIMessage(
-        #             content="I'll need to think about this step by step."
-        #         )
-        #     }
-        return (
-            {
-                output_key: [response],
-                constants.AGENT_STATE__KEY_DRAFT: (False),
-            }
-            if state[constants.AGENT_STATE__KEY_DRAFT]
-            else {output_key: [response]}
-        )
-
-    def draft_solve(self, state: AgentState) -> dict:
-        state[constants.AGENT_STATE__KEY_DRAFT] = True
-        return self.solve(state)
-
-    def format_tool_message(self, response: str, ai_message: AIMessage) -> ToolMessage:
-        """
-        Format the response as a tool message specifying the tool call ID.
-
-        Args:
-            response: The response to be formatted.
-            ai_message: The AIMessage object containing the tool call ID.
-
-        Returns:
-            ToolMessage: The formatted tool message.
-        """
-        # This is the node we will add to the agent graph.
-        # Most tool-calling APIs require that the `ToolMessage` contain the ID
-        # of the tool call that generated the message.
-        return ToolMessage(
-            content=response,
-            tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
-        )
-
-    def evaluate(self, state: AgentState) -> dict:
+    def evaluate(self, code: str, test_cases: list[TestCase] = None) -> str:
         """
         Evaluate the correctness of the code.
 
         Args:
-            state: The state of the agent.
+            code: The code to be evaluated.
 
         Returns:
-            dict: The updated state of the agent.
+            str: The result of the evaluation.
         """
-        test_cases = state[constants.AGENT_STATE__KEY_TEST_CASES]
-        # Extract the `AIMessage` that is expected to contain the code from the last tool call.
-        ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
-        if not ai_message.tool_calls:
-            # If there was no tool call, add a `HumanMessage` to prompt the agent to generate code.
-            return {
-                constants.AGENT_STATE__KEY_MESSAGES: [
-                    HumanMessage(
-                        content="No code submitted. Please try again using the correct Python code."
-                    )
-                ]
-            }
-        try:
-            # Extract the code from the tool call.
-            code: str = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
-                constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
-            ]
-            # Use PythonREPL to sanitise the code
-            # See: https://api.python.langchain.com/en/latest/utilities/langchain_experimental.utilities.python.PythonREPL.html
-            code = CodeExecutor.sanitise_code(code)
-        except Exception as e:
-            # If there was an error extracting the code, return an error message as state.
-            return {
-                constants.AGENT_STATE__KEY_MESSAGES: [
-                    self.format_tool_message(repr(e), ai_message)
-                ]
-            }
+        evaluator = CodeExecutor()
+        # try:
+        #     # Use PythonREPL to sanitise the code
+        #     # See: https://api.python.langchain.com/en/latest/utilities/langchain_experimental.utilities.python.PythonREPL.html
+        #     sanitised_code = CodeExecutor.sanitise_code(code)
+        # except Exception as e:
+        #     # If there was an error extracting the code, return an error message as state.
+        #     return e
         num_test_cases = len(test_cases) if test_cases is not None else 0
         if num_test_cases == 0:
-            return {
-                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
-            }
+            return {constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES}
         succeeded = 0
         test_results = []
-        # TODO: Enable parallel execution of test cases.
         for test_case in test_cases:
             input_data = test_case[constants.TEST_CASE__KEY_INPUTS]
             expected_output = test_case[constants.TEST_CASE__KEY_OUTPUTS]
-            test_result = self._evaluator.check_correctness(
+            test_result = evaluator.check_correctness(
                 code,
                 input_data,
                 expected_output,
-                state[constants.AGENT_STATE__KEY_RUNTIME_LIMIT],
             )
             test_results.append(test_result)
             if test_result == constants.EXECUTOR_MESSAGE__PASSED:
                 succeeded += 1
         pass_rate = succeeded / num_test_cases if num_test_cases else "N/A"
         if pass_rate == 1:
-            return {
-                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
-            }
+            return constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
 
         responses = "\n".join(
             [f"<test id={i}>\n{r}\n</test>" for i, r in enumerate(test_results)]
         )
         response = f"Incorrect submission. Please review the failures reported below and respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
 
-        return {
-            constants.AGENT_STATE__KEY_MESSAGES: [
-                self.format_tool_message(response, ai_message)
-            ]
-        }
-
-    def build_agent_graph(self):
-        builder = StateGraph(AgentState)
-        # builder.add_node("draft", self.draft_solve)
-        # builder.add_node("retrieve", self.retrieve_examples)
-        builder.add_node("solve", self.solve)
-        builder.add_node("evaluate", self.evaluate)
-        # Add connectivity
-        builder.add_edge(START, "solve")
-        # builder.add_edge("draft", "retrieve")
-        # builder.add_edge("retrieve", "solve")
-        builder.add_edge("solve", "evaluate")
-
-        def control_edge(state: AgentState):
-            if (
-                state.get(constants.AGENT_STATE__KEY_STATUS)
-                == constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
-                or state.get(constants.AGENT_STATE__KEY_STATUS)
-                == constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
-            ):
-                return END
-            return "solve"
-
-        builder.add_conditional_edges(
-            "evaluate", control_edge, {END: END, "solve": "solve"}
-        )
-        builder.add_edge("solve", END)
-        checkpointer = SqliteSaver.from_conn_string(":memory:")
-        self.agent_graph = builder.compile(checkpointer=checkpointer, debug=False)
+        return response

@@ -20,8 +20,6 @@ import traceback
 
 import constants
 
-from langchain_experimental.utilities.python import PythonREPL
-
 multiprocessing.set_start_method("fork", force=True)
 # WARNING
 # This program exists to execute untrusted model-generated code. Although
@@ -107,24 +105,12 @@ class CodeExecutor:
         finally:
             self._add_execution_time(time.time() - start_time)
 
-    def sanitise_code(code: str) -> str:
-        """
-        Sanitise the code to remove any potentially harmful code.
-
-        Args:
-            code (str): The code to sanitise.
-
-        Returns:
-            str: The sanitised code.
-        """
-        return PythonREPL.sanitize_input(code)
-
     def check_correctness(
         self,
         program: str,
         input_data: str,
         expected_output: str,
-        timeout: float,
+        timeout: float = 60.0,
         reset_execution_time: bool = False,
     ) -> str:
         """
