@@ -23,8 +23,10 @@ from llama_index.core.llms import ChatMessage
 from llama_index.core.tools import ToolSelection, ToolOutput
 from llama_index.core.workflow import Event
 
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from llama_index.core.program import FunctionCallingProgram
 
 from code_executor import CodeExecutor
 
@@ -39,6 +41,12 @@ except ImportError:  # Graceful fallback if IceCream isn't installed.
 class TestCase(TypedDict):
     inputs: str
     outputs: str
+
+
+class CoderAgentOutput(BaseModel):
+    reasoning: str
+    pseudocode: str
+    code: str
 
 
 class InputEvent(Event):
@@ -68,6 +76,15 @@ class CoderAgent(Workflow):
 
         self.tools = [FunctionTool.from_defaults(self.evaluate)]
 
+        self.pydantic_code_generator = FunctionCallingProgram.from_defaults(
+            output_cls=CoderAgentOutput,
+            llm=self.llm,
+            verbose=True,
+            prompt_template_str="{input}",
+            tool_choice=self.tools[0],
+            allow_parallel_tool_calls=True,
+        )
+
         self.memory = ChatMemoryBuffer.from_defaults(llm=llm)
         self.sources = []
 
@@ -90,6 +107,9 @@ class CoderAgent(Workflow):
         ic(ev)
         chat_history = ev.input
 
+        ic(chat_history[-1].content)
+        pydantic_call = self.pydantic_code_generator(input=chat_history[-1].content)
+        ic(pydantic_call)
         response = await self.llm.achat_with_tools(
             self.tools, chat_history=chat_history
         )
