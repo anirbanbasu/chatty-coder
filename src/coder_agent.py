@@ -23,6 +23,9 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langchain.schema.output_parser import StrOutputParser
+
+from langchain_core.tools import BaseTool
 
 from code_executor import CodeExecutor
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -56,55 +59,49 @@ class AgentState(TypedDict):
     draft: bool = False
 
 
-class codeOutput(BaseModel):
-    """Output Python code to solve the given problem."""
+class CoderInput(BaseModel):
+    challenge: str = Field(..., description="The coding challenge.")
+    examples: str = Field(
+        ...,
+        description="Examples of similar challenges and their solutions.",
+        default=constants.EMPTY_STRING,
+    )
 
-    reasoning: str = Field(..., description="Conceptual solution.")
-    pseudocode: str = Field(..., description="Detailed pseudocode in English.")
-    code: str = Field(..., description="Valid solution to the problem in Python code.")
+
+class CoderOutput(BaseModel):
+    reasoning: str = Field(..., description="Reasoning for the conceptual solution.")
+    pseudocode: str = Field(..., description="Pseudocode for the solution.")
+    code: str = Field(..., description="Python code implementation for the solution.")
 
 
-class CoderAgent:
+class CoderTool(BaseTool):
+    name = "coder_tool"
+    description = "Generate Python code to solve the given problem."
+    args_schema = CoderOutput
+
+    def __init__(self, llm: BaseChatModel):
+        self._llm = llm.with_structured_output(CoderOutput)
+
+    def _run(self, challenge: str, examples: str) -> CoderOutput:
+        """Run the tool"""
+        messages = [
+            ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
+            ("human", "{input}"),
+        ]
+        chain = (
+            ChatPromptTemplate.from_messages(messages=messages)
+            | self._llm
+            | StrOutputParser()
+        )
+        return chain.invoke({"input": challenge, "examples": examples})
+
+
+class MultiAgentOrchestrator:
     def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
-        # Retrieve the USA Computing Olympiad dataset
-        # This block is disabled, only used for inspecting the dataset and perhaps, for retrieval in the future
-        # usaco_url = "https://storage.googleapis.com/benchmarks-artifacts/usaco/usaco_sampled_with_tests.zip"
-        # zip_path = "usaco.zip"
-        # extract_path = "usaco_datasets"
-
-        # if not os.path.exists(extract_path):
-        #     response = requests.get(usaco_url)
-        #     with open(zip_path, "wb") as file:
-        #         file.write(response.content)
-
-        #     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        #         zip_ref.extractall(extract_path)
-
-        #     os.remove(zip_path)
-
-        # ds = datasets.load_from_disk(
-        #     os.path.join(extract_path, "usaco_v3_sampled_with_tests")
-        # )
-
-        # test_case_0 = ds[0][constants.AGENT_STATE__KEY_TEST_CASES]
-        # ic(
-        #     type(test_case_0),
-        #     (
-        #         (len(test_case_0), test_case_0[0])
-        #         if type(test_case_0) is list
-        #         else test_case_0
-        #     ),
-        # )
-        # # We will test our agent on index 0 (the same as above).
-        # # Later, we will test on index 2 (the first 'silver difficulty' question)
-        # test_indices = [0, 2]
-        # train_ds = [row for i, row in enumerate(ds) if i not in test_indices]
-        # test_ds = [row for i, row in enumerate(ds) if i in test_indices]
-
         self._llm = llm
         self._prompt = prompt
-        self._runnable_solver = self._prompt | self._llm.bind_tools([codeOutput])
-        self._runnable_draft_solver = self._prompt | self._llm.bind_tools([codeOutput])
+        self._runnable_solver = self._prompt | self._llm.bind_tools([CoderOutput])
+        self._runnable_draft_solver = self._prompt | self._llm.bind_tools([CoderOutput])
         self._evaluator = CodeExecutor()
         # self._retriever = BM25Retriever.from_texts(
         #     [self.format_example(row) for row in train_ds]

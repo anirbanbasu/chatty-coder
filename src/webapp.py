@@ -15,7 +15,7 @@
 
 from dotenv import load_dotenv
 
-from coder_agent import CoderAgent, TestCase
+from coder_agent import MultiAgentOrchestrator, TestCase
 from utils import parse_env
 
 try:
@@ -213,7 +213,7 @@ class GradioApp:
                 SystemMessagePromptTemplate.from_template(
                     template=parse_env(
                         constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
-                        constants.ENV_VAR_VALUE__LLM_SYSTEM_PROMPT,
+                        constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT,
                     )
                 ),
                 MessagesPlaceholder(
@@ -222,7 +222,7 @@ class GradioApp:
             ],
         )
         ic(prompt)
-        coder_agent = CoderAgent(llm=self._llm, prompt=prompt)
+        coder_agent = MultiAgentOrchestrator(llm=self._llm, prompt=prompt)
         coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": "1", "k": 3}}
         # FIXME: Stream mode is not working as expected. Need to improve.

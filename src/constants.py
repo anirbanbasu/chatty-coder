@@ -108,7 +108,7 @@ ENV_VAR_VALUE__LLM_REPEAT_PENALTY = "1.1"
 ENV_VAR_NAME__LLM_SEED = "LLM__SEED"
 ENV_VAR_VALUE__LLM_SEED = "1"
 ENV_VAR_NAME__LLM_SYSTEM_PROMPT = "LLM__SYSTEM_PROMPT"
-ENV_VAR_VALUE__LLM_SYSTEM_PROMPT = """
+ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT = """
 You are a world-class competitive Python programmer. You write concise and well documented Python only code. You follow the PEP8 style guide.
 Please respond with a Python 3 solution to the problem below.
 First, reason through the problem and conceptualise a solution. Output this reasoning in Markdown format.
@@ -118,6 +118,20 @@ Finally output the working Python code for your solution, ensuring to fix any er
 Do not use external libraries.
 You may be provided with examples, some of which may be in languages other than Python.
 {examples}
+"""
+
+ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT = """
+You are a world-class Python programmer. You write concise and well-documented Python-only code following the PEP8 style guide.
+
+Please respond with a Python 3 solution to the problem below.
+First, output a reasoning through the problem and conceptualise a solution.
+Then, output a pseudocode to implement your concept solution. If relevant, add a time and space complexity analysis for your pseudocode.
+Finally, output the working Python code for your solution. Do not use external libraries.
+
+Optional examples of similar problems and solutions (may not be in Python):
+{examples}
+
+Given problem:
 """
 
 
