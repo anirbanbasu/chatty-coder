@@ -28,6 +28,7 @@ from code_executor import CodeExecutor
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph, START
 
+import sqlite3
 import constants
 
 try:
@@ -347,5 +348,6 @@ class CoderAgent:
             "evaluate", control_edge, {END: END, "solve": "solve"}
         )
         builder.add_edge("solve", END)
-        checkpointer = SqliteSaver.from_conn_string(":memory:")
+        connection = sqlite3.connect(":memory:", check_same_thread=False)
+        checkpointer = SqliteSaver(conn=connection)
         self.agent_graph = builder.compile(checkpointer=checkpointer, debug=False)
