@@ -23,9 +23,7 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain.schema.output_parser import StrOutputParser
 
-from langchain_core.tools import BaseTool
 
 from code_executor import CodeExecutor
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -64,7 +62,6 @@ class CoderInput(BaseModel):
     examples: str = Field(
         ...,
         description="Examples of similar challenges and their solutions.",
-        default=constants.EMPTY_STRING,
     )
 
 
@@ -72,36 +69,41 @@ class CoderOutput(BaseModel):
     reasoning: str = Field(..., description="Reasoning for the conceptual solution.")
     pseudocode: str = Field(..., description="Pseudocode for the solution.")
     code: str = Field(..., description="Python code implementation for the solution.")
+    summary: str = Field(
+        ..., description="A short one sentence summary of the solution."
+    )
 
 
-class CoderTool(BaseTool):
-    name = "coder_tool"
-    description = "Generate Python code to solve the given problem."
-    args_schema = CoderOutput
-
+class Coder:
     def __init__(self, llm: BaseChatModel):
-        self._llm = llm.with_structured_output(CoderOutput)
+        self._llm = llm
 
-    def _run(self, challenge: str, examples: str) -> CoderOutput:
+    def solve(
+        self, challenge: str, examples: str = constants.EMPTY_STRING
+    ) -> CoderOutput:
         """Run the tool"""
         messages = [
             ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
             ("human", "{input}"),
         ]
-        chain = (
-            ChatPromptTemplate.from_messages(messages=messages)
-            | self._llm
-            | StrOutputParser()
-        )
-        return chain.invoke({"input": challenge, "examples": examples})
+        chain = ChatPromptTemplate.from_messages(
+            messages=messages
+        ) | self._llm.with_structured_output(CoderOutput)
+        raw_result = chain.invoke({"input": challenge, "examples": examples})
+        ic(raw_result)
+        return raw_result
 
 
 class MultiAgentOrchestrator:
     def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
         self._llm = llm
         self._prompt = prompt
-        self._runnable_solver = self._prompt | self._llm.bind_tools([CoderOutput])
-        self._runnable_draft_solver = self._prompt | self._llm.bind_tools([CoderOutput])
+        self._runnable_solver = self._prompt | self._llm.with_structured_output(
+            CoderOutput
+        )
+        self._runnable_draft_solver = self._prompt | self._llm.with_structured_output(
+            CoderOutput
+        )
         self._evaluator = CodeExecutor()
         # self._retriever = BM25Retriever.from_texts(
         #     [self.format_example(row) for row in train_ds]
@@ -200,12 +202,18 @@ class MultiAgentOrchestrator:
             inputs[constants.AGENT_STATE__KEY_EXAMPLES] = state[
                 constants.AGENT_STATE__KEY_EXAMPLES
             ]
+        coder = Coder(self._llm)
+        ic(inputs)
         response = (
             # Use the draft solver only if the `draft` flag is set in the state
-            self._runnable_draft_solver.invoke(inputs)
-            if state[constants.AGENT_STATE__KEY_DRAFT] is True
-            else self._runnable_solver.invoke(inputs)
+            # self._runnable_draft_solver.invoke(inputs)
+            # if state[constants.AGENT_STATE__KEY_DRAFT] is True
+            # else self._runnable_solver.invoke(inputs)
+            self.pydantic_to_ai_message(
+                coder.solve(inputs[constants.AGENT_STATE__KEY_MESSAGES][-1].content)
+            )
         )
+        ic(response)
         # FIXME: Why do we need this? `OllamaFunctions`, for example, does not output `content`.
         # if not response.content:
         #     return {
@@ -225,6 +233,11 @@ class MultiAgentOrchestrator:
     def draft_solve(self, state: AgentState) -> dict:
         state[constants.AGENT_STATE__KEY_DRAFT] = True
         return self.solve(state)
+
+    def pydantic_to_ai_message(
+        self, structured_message: BaseModel, id: str = None
+    ) -> AIMessage:
+        return AIMessage(content=[structured_message.dict()], id=id)
 
     def format_tool_message(self, response: str, ai_message: AIMessage) -> ToolMessage:
         """
@@ -258,7 +271,8 @@ class MultiAgentOrchestrator:
         test_cases = state[constants.AGENT_STATE__KEY_TEST_CASES]
         # Extract the `AIMessage` that is expected to contain the code from the last tool call.
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
-        if not ai_message.tool_calls:
+        json_dict = ai_message.content[0]
+        if not json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]:
             # If there was no tool call, add a `HumanMessage` to prompt the agent to generate code.
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
@@ -269,9 +283,7 @@ class MultiAgentOrchestrator:
             }
         try:
             # Extract the code from the tool call.
-            code: str = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
-                constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
-            ]
+            code: str = json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
             # Use PythonREPL to sanitise the code
             # See: https://api.python.langchain.com/en/latest/utilities/langchain_experimental.utilities.python.PythonREPL.html
             code = CodeExecutor.sanitise_code(code)

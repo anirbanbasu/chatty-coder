@@ -32,6 +32,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph.message import AnyMessage
 
+
 # from langchain_groq.chat_models import ChatGroq
 # from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import (
@@ -239,17 +240,16 @@ class GradioApp:
             # stream_mode="values",
         )
         for result in result_iterator:
-            ic(result)
             if "solve" in result:
-                ai_message: AIMessage = result["solve"][
+                coder_output: AIMessage = result["solve"][
                     constants.AGENT_STATE__KEY_MESSAGES
                 ][-1]
-                if ai_message.tool_calls:
-                    # raise ValueError("Coding agent did not produce a valid code block")
+                if coder_output:
+                    json_dict = coder_output.content[0]
                     yield [
-                        ai_message.tool_calls[0]["args"]["reasoning"],
-                        ai_message.tool_calls[0]["args"]["pseudocode"],
-                        ai_message.tool_calls[0]["args"]["code"],
+                        json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
+                        json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
+                        json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
                     ]
 
     def add_test_case(
@@ -367,13 +367,9 @@ class GradioApp:
                         show_label=True,
                         line_breaks=True,
                     )
-                    output_pseudocode = gr.Markdown(
-                        label="Pseudocode",
-                        show_label=True,
-                        line_breaks=True,
-                    )
+                    output_pseudocode = gr.Code(label="Pseudocode", show_label=True)
                     output_code = gr.Code(
-                        label="Code",
+                        label="Python code",
                         show_label=True,
                         language="python",
                     )
