@@ -97,11 +97,22 @@ class Coder:
 class MultiAgentOrchestrator:
     def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
         self._llm = llm
-        self._prompt = prompt
-        self._runnable_solver = self._prompt | self._llm.with_structured_output(
-            CoderOutput
+        draft_solver_messages = [
+            ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
+            ("human", "{input}"),
+        ]
+        self._draft_solver_prompt = ChatPromptTemplate.from_messages(
+            messages=draft_solver_messages
         )
-        self._runnable_draft_solver = self._prompt | self._llm.with_structured_output(
+        self._runnable_draft_solver = (
+            self._draft_solver_prompt | self._llm.with_structured_output(CoderOutput)
+        )
+        solver_messages = [
+            ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
+            ("human", "{input}"),
+        ]
+        self._solver_prompt = ChatPromptTemplate.from_messages(messages=solver_messages)
+        self._runnable_solver = self._solver_prompt | self._llm.with_structured_output(
             CoderOutput
         )
         self._evaluator = CodeExecutor()
@@ -183,9 +194,10 @@ class MultiAgentOrchestrator:
         """
         # Get the inputs for the solver
         inputs = {
-            constants.AGENT_STATE__KEY_MESSAGES: state[
-                constants.AGENT_STATE__KEY_MESSAGES
-            ]
+            # FIXME: Check if this is a human message at all!
+            constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES][
+                -1
+            ].content
         }
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
@@ -197,21 +209,22 @@ class MultiAgentOrchestrator:
             else constants.AGENT_STATE__KEY_MESSAGES
         )
         if has_examples:
-            output_key = constants.AGENT_STATE__KEY_MESSAGES
+            # output_key = constants.AGENT_STATE__KEY_MESSAGES
             # Retrieve examples to solve the problem
-            inputs[constants.AGENT_STATE__KEY_EXAMPLES] = state[
+            inputs[constants.CHAIN_DICT__KEY_EXAMPLES] = state[
                 constants.AGENT_STATE__KEY_EXAMPLES
             ]
-        coder = Coder(self._llm)
+        else:
+            inputs[constants.CHAIN_DICT__KEY_EXAMPLES] = constants.EMPTY_STRING
         ic(inputs)
-        response = (
+        response = self.pydantic_to_ai_message(
             # Use the draft solver only if the `draft` flag is set in the state
-            # self._runnable_draft_solver.invoke(inputs)
-            # if state[constants.AGENT_STATE__KEY_DRAFT] is True
-            # else self._runnable_solver.invoke(inputs)
-            self.pydantic_to_ai_message(
-                coder.solve(inputs[constants.AGENT_STATE__KEY_MESSAGES][-1].content)
-            )
+            self._runnable_draft_solver.invoke(inputs)
+            if state[constants.AGENT_STATE__KEY_DRAFT] is True
+            else self._runnable_solver.invoke(inputs)
+            # self.pydantic_to_ai_message(
+            #     coder.solve(inputs[constants.AGENT_STATE__KEY_MESSAGES][-1].content)
+            # )
         )
         ic(response)
         # FIXME: Why do we need this? `OllamaFunctions`, for example, does not output `content`.

@@ -53,6 +53,9 @@ AGENT_STATE__KEY_RUNTIME_LIMIT = "runtime_limit"
 AGENT_STATE__KEY_STATUS = "status"
 AGENT_STATE__KEY_DRAFT = "draft"
 
+CHAIN_DICT__KEY_INPUT = "input"
+CHAIN_DICT__KEY_EXAMPLES = "examples"
+
 AGENT_NODE__EVALUATE_STATUS_SUCCESS = "success"
 AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES = "no test cases"
 
@@ -109,15 +112,18 @@ ENV_VAR_NAME__LLM_SEED = "LLM__SEED"
 ENV_VAR_VALUE__LLM_SEED = "1"
 ENV_VAR_NAME__LLM_SYSTEM_PROMPT = "LLM__SYSTEM_PROMPT"
 ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT = """
-You are a world-class competitive Python programmer. You write concise and well documented Python only code. You follow the PEP8 style guide.
+You are a world-class Python programmer. You write concise and well-documented code following the PEP8 style guide.
+
 Please respond with a Python 3 solution to the problem below.
-First, reason through the problem and conceptualise a solution. Output this reasoning in Markdown format.
-Then write a detailed pseudocode to uncover any potential logical errors or omissions in your reasoning.
-Wherever relevant, the pseudocode must also be accompanied by a time and a space complexity estimation. Output the pseudocode in Markdown format.
-Finally output the working Python code for your solution, ensuring to fix any errors uncovered while writing the pseudocode.
-Do not use external libraries.
-You may be provided with examples, some of which may be in languages other than Python.
+First, output a reasoning through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
+Then, output a pseudocode in Pascal to implement your concept solution.
+Then, output the working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+Finally, output a one sentence summary describing what your solution does, as if you are explaining your solution to the human user.
+
+Optional examples of similar problems and solutions (may not be in Python):
 {examples}
+
+Given problem:
 """
 
 ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT = """
