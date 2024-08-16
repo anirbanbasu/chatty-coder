@@ -253,7 +253,7 @@ class GradioApp:
                     ]
 
     def add_test_case(
-        self, test_cases: list[TestCase], test_case_in: str, test_case_out: str
+        self, test_cases: list[TestCase] | None, test_case_in: str, test_case_out: str
     ) -> list[TestCase]:
         """
         Add a test case to the list of test cases.
@@ -321,19 +321,25 @@ class GradioApp:
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
                     gr.Markdown("# Coding challenge")
+                    gr.Chatbot(
+                        bubble_full_width=True,
+                        likeable=True,
+                        placeholder="Your conversation with AI will appear here...",
+                    )
                     btn_code = gr.Button(
                         value="Let's code!",
                         variant="primary",
                     )
-                    with gr.Tab(label="The coding question"):
-                        input_user_question = gr.TextArea(
-                            label="Question (in Markdown)",
-                            placeholder="Enter the coding question that you want to ask...",
-                            lines=10,
-                            elem_id="user_question",
-                        )
-                    with gr.Tab(label="Question preview"):
-                        user_input_preview = gr.Markdown()
+                    chk_show_user_input_preview = gr.Checkbox(
+                        value=False, label="Preview question (Markdown formatted)"
+                    )
+                    input_user_question = gr.TextArea(
+                        label="Question (in Markdown)",
+                        placeholder="Enter the coding question that you want to ask...",
+                        lines=10,
+                        elem_id="user_question",
+                    )
+                    user_input_preview = gr.Markdown(visible=False)
                     with gr.Accordion(label="Code evaluation", open=False):
                         with gr.Row(equal_height=True):
                             input_test_cases_in = gr.Textbox(
@@ -409,6 +415,23 @@ class GradioApp:
                 lambda text: text,
                 inputs=[input_user_question],
                 outputs=[user_input_preview],
+                api_name=False,
+            )
+
+            chk_show_user_input_preview.change(
+                fn=lambda checked: (
+                    (
+                        gr.update(visible=False),
+                        gr.update(visible=True),
+                    )
+                    if checked
+                    else (
+                        gr.update(visible=True),
+                        gr.update(visible=False),
+                    )
+                ),
+                inputs=[chk_show_user_input_preview],
+                outputs=[input_user_question, user_input_preview],
                 api_name=False,
             )
 

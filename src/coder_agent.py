@@ -194,11 +194,13 @@ class MultiAgentOrchestrator:
         """
         # Get the inputs for the solver
         inputs = {
-            # FIXME: Check if this is a human message at all!
-            constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES][
-                -1
-            ].content
+            # FIXME: Check if this is a human message at all! Must be able to parse all the messages.
+            # constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES][
+            #     -1
+            # ].content
+            constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES]
         }
+        ic(inputs[constants.CHAIN_DICT__KEY_INPUT])
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
         ic(state)
@@ -286,7 +288,9 @@ class MultiAgentOrchestrator:
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         json_dict = ai_message.content[0]
         if not json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]:
-            # If there was no tool call, add a `HumanMessage` to prompt the agent to generate code.
+            # If there was no code, add a `HumanMessage` to prompt the agent to generate code.
+            # FIXME: Must prompt the LLM with the last human message that specified the coding question, or ensure
+            # that the LLM gets a chat log of all the messages.
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
                     HumanMessage(
