@@ -21,7 +21,12 @@ from typing import Annotated
 from typing_extensions import TypedDict
 
 from langgraph.graph.message import AnyMessage, add_messages
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    ToolMessage,
+    FunctionMessage,
+)
 from langchain_core.runnables import RunnableConfig
 
 
@@ -57,41 +62,10 @@ class AgentState(TypedDict):
     draft: bool = False
 
 
-class CoderInput(BaseModel):
-    challenge: str = Field(..., description="The coding challenge.")
-    examples: str = Field(
-        ...,
-        description="Examples of similar challenges and their solutions.",
-    )
-
-
 class CoderOutput(BaseModel):
     reasoning: str = Field(..., description="Reasoning for the conceptual solution.")
     pseudocode: str = Field(..., description="Pseudocode for the solution.")
     code: str = Field(..., description="Python code implementation for the solution.")
-    summary: str = Field(
-        ..., description="A short one sentence summary of the solution."
-    )
-
-
-class Coder:
-    def __init__(self, llm: BaseChatModel):
-        self._llm = llm
-
-    def solve(
-        self, challenge: str, examples: str = constants.EMPTY_STRING
-    ) -> CoderOutput:
-        """Run the tool"""
-        messages = [
-            ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
-            ("human", "{input}"),
-        ]
-        chain = ChatPromptTemplate.from_messages(
-            messages=messages
-        ) | self._llm.with_structured_output(CoderOutput)
-        raw_result = chain.invoke({"input": challenge, "examples": examples})
-        ic(raw_result)
-        return raw_result
 
 
 class MultiAgentOrchestrator:
@@ -107,14 +81,12 @@ class MultiAgentOrchestrator:
         self._runnable_draft_solver = (
             self._draft_solver_prompt | self._llm.with_structured_output(CoderOutput)
         )
-        solver_messages = [
-            ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
-            ("human", "{input}"),
-        ]
-        self._solver_prompt = ChatPromptTemplate.from_messages(messages=solver_messages)
-        self._runnable_solver = self._solver_prompt | self._llm.with_structured_output(
-            CoderOutput
-        )
+        # solver_messages = [
+        #     ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
+        #     ("human", "{input}"),
+        # ]
+        # self._solver_prompt = ChatPromptTemplate.from_messages(messages=solver_messages)
+        self._runnable_solver = prompt | self._llm.with_structured_output(CoderOutput)
         self._evaluator = CodeExecutor()
         # self._retriever = BM25Retriever.from_texts(
         #     [self.format_example(row) for row in train_ds]
@@ -184,7 +156,7 @@ class MultiAgentOrchestrator:
 
     def solve(self, state: AgentState) -> dict:
         """
-        Solve the problem presented in the `messages` key of the state.
+        Solve the problem presented through the `messages` key of the state.
 
         Args:
             state: The state of the agent.
@@ -194,12 +166,13 @@ class MultiAgentOrchestrator:
         """
         # Get the inputs for the solver
         inputs = {
-            constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES]
+            constants.AGENT_STATE__KEY_MESSAGES: state[
+                constants.AGENT_STATE__KEY_MESSAGES
+            ]
         }
-        last_message_from_human = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
-        ic(state)
+        ic(f"State in solve: {state}")
         # If `draft`` is requested in the state then output a candidate solution
         output_key = (
             constants.AGENT_STATE__KEY_CANDIDATE
@@ -209,37 +182,25 @@ class MultiAgentOrchestrator:
         if has_examples:
             # output_key = constants.AGENT_STATE__KEY_MESSAGES
             # Retrieve examples to solve the problem
-            inputs[constants.CHAIN_DICT__KEY_EXAMPLES] = state[
+            inputs[constants.AGENT_STATE__KEY_EXAMPLES] = state[
                 constants.AGENT_STATE__KEY_EXAMPLES
             ]
         else:
-            inputs[constants.CHAIN_DICT__KEY_EXAMPLES] = constants.EMPTY_STRING
-        ic(inputs)
+            inputs[constants.AGENT_STATE__KEY_EXAMPLES] = constants.EMPTY_STRING
         response = self.pydantic_to_ai_message(
             # Use the draft solver only if the `draft` flag is set in the state
             self._runnable_draft_solver.invoke(inputs)
             if state[constants.AGENT_STATE__KEY_DRAFT] is True
             else self._runnable_solver.invoke(inputs)
-            # self.pydantic_to_ai_message(
-            #     coder.solve(inputs[constants.AGENT_STATE__KEY_MESSAGES][-1].content)
-            # )
         )
         ic(response)
-        state[constants.AGENT_STATE__KEY_MESSAGES].append(response)
-        # FIXME: Why do we need this? `OllamaFunctions`, for example, does not output `content`.
-        # if not response.content:
-        #     return {
-        #         output_key: AIMessage(
-        #             content="I'll need to think about this step by step."
-        #         )
-        #     }
         return (
             {
                 output_key: [response],
                 constants.AGENT_STATE__KEY_DRAFT: (False),
             }
             if state[constants.AGENT_STATE__KEY_DRAFT]
-            else {output_key: [last_message_from_human, response]}
+            else {output_key: [response]}
         )
 
     def draft_solve(self, state: AgentState) -> dict:
@@ -267,7 +228,8 @@ class MultiAgentOrchestrator:
         # of the tool call that generated the message.
         return ToolMessage(
             content=response,
-            tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
+            # tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
+            tool_call_id=ai_message.id,
         )
 
     def evaluate(self, state: AgentState) -> dict:
@@ -280,14 +242,13 @@ class MultiAgentOrchestrator:
         Returns:
             dict: The updated state of the agent.
         """
+        ic(f"State in evaluate: {state}")
         test_cases = state[constants.AGENT_STATE__KEY_TEST_CASES]
-        # Extract the `AIMessage` that is expected to contain the code from the last tool call.
+        # Extract the `AIMessage` that is expected to contain the code from the last call.
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
+        # ai_message is a list of dictionaries.
         json_dict = ai_message.content[0]
         if not json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]:
-            # If there was no code, add a `HumanMessage` to prompt the agent to generate code.
-            # FIXME: Must prompt the LLM with the last human message that specified the coding question, or ensure
-            # that the LLM gets a chat log of all the messages.
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
                     HumanMessage(
@@ -300,12 +261,14 @@ class MultiAgentOrchestrator:
             code: str = json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
             # Use PythonREPL to sanitise the code
             # See: https://api.python.langchain.com/en/latest/utilities/langchain_experimental.utilities.python.PythonREPL.html
+            # FIXME: Why not use PythonREPL to run the code?
             code = CodeExecutor.sanitise_code(code)
         except Exception as e:
             # If there was an error extracting the code, return an error message as state.
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
-                    self.format_tool_message(repr(e), ai_message)
+                    # self.format_tool_message(repr(e), ai_message)
+                    FunctionMessage(content=repr(e), name="evaluate")
                 ]
             }
         num_test_cases = len(test_cases) if test_cases is not None else 0
@@ -341,7 +304,8 @@ class MultiAgentOrchestrator:
 
         return {
             constants.AGENT_STATE__KEY_MESSAGES: [
-                self.format_tool_message(response, ai_message)
+                # self.format_tool_message(response, ai_message)
+                FunctionMessage(content=response, name="evaluate")
             ]
         }
 

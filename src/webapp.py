@@ -14,6 +14,8 @@
 """The main web application module for the Gradio app."""
 
 from dotenv import load_dotenv
+import uuid
+import os
 
 from coder_agent import MultiAgentOrchestrator, TestCase
 from utils import parse_env
@@ -43,9 +45,6 @@ from langchain_core.prompts import (
 
 import gradio as gr
 import constants
-
-
-gr.set_static_paths(paths=["assets/logo-embed.svg"])
 
 
 class GradioApp:
@@ -192,7 +191,6 @@ class GradioApp:
 
     def find_solution(
         self,
-        chat_history: list[dict],
         user_question: str,
         runtime_limit: int,
         test_cases: list[TestCase] = None,
@@ -201,12 +199,14 @@ class GradioApp:
         Generator function to find a coding solution to the user question.
 
         Args:
-            user_question (str): The user question to provide a solution for.
-            runtime_limit (int): The runtime limit, in seconds, for executing the solution.
-            test_cases (list[TestCase], optional): The list of test cases to validate the solution against. Defaults to None.
+            user_question (str): The question asked by the user.
+            runtime_limit (int): The runtime limit for the code execution.
+            test_cases (list[TestCase], optional): The list of test cases to evaluate the code against. Defaults to None.
 
         Yields:
-            list[str, str, str]: A list containing the reasoning, pseudocode, and code for the solution.
+            str: The reasoning behind the solution.
+            str: The pseudocode for the solution.
+            str: The Python code for the solution.
         """
         prompt = ChatPromptTemplate(
             input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
@@ -226,25 +226,18 @@ class GradioApp:
                 ),
             ],
         )
-        ic(prompt)
         coder_agent = MultiAgentOrchestrator(llm=self._llm, prompt=prompt)
         coder_agent.build_agent_graph()
-        config = {"configurable": {"thread_id": "1", "k": 3}}
-        chat_history.append({"role": "user", "content": user_question})
-        # Show the user message right away
-        yield [chat_history, None, None, None]
-        # FIXME: Stream mode is not working as expected. Need to improve.
-        # Note that this streams the results by graph step, not by individual messages.
+        config = {"configurable": {"thread_id": uuid.uuid4().hex, "k": 3}}
+        graph_input = {
+            constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(content=user_question),
+            constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
+            constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
+        }
+        ic(graph_input)
         result_iterator = coder_agent.agent_graph.stream(
-            input={
-                constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(
-                    content=user_question
-                ),
-                constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
-                constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
-            },
+            input=graph_input,
             config=config,
-            # stream_mode="values",
         )
         for result in result_iterator:
             if "solve" in result:
@@ -253,16 +246,7 @@ class GradioApp:
                 ][-1]
                 if coder_output:
                     json_dict = coder_output.content[0]
-                    chat_history.append(
-                        {
-                            "role": "assistant",
-                            "content": json_dict[
-                                constants.PYDANTIC_MODEL__CODE_OUTPUT__SUMMARY
-                            ],
-                        }
-                    )
                     yield [
-                        chat_history,
                         json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
                         json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
                         json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
@@ -311,12 +295,15 @@ class GradioApp:
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
+        gr.set_static_paths(paths=[constants.PROJECT_LOGO_PATH])
         with gr.Blocks(
             # See theming guide at https://www.gradio.app/guides/theming-guide
             # theme="gstaff/xkcd",
             # theme="derekzen/stardust",
             # theme="bethecloud/storj_theme",
             theme="abidlabs/Lime",
+            fill_width=True,
+            fill_height=True,
             css=constants.CSS__GRADIO_APP,
             analytics_enabled=False,
         ) as self.interface:
@@ -331,37 +318,38 @@ class GradioApp:
                                 alt="chatty-coder logo"
                                 src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
                         """,
+                        # "/file=assets/logo-embed.svg"
+                        # "https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg"
                     )
                 with gr.Column(scale=3):
                     btn_theme_toggle = gr.Button("Toggle dark mode")
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
-                    gr.Markdown("# Coding challenge")
-                    chatbot_conversation_history = gr.Chatbot(
-                        label="{cha@tty cod:r}",
-                        type="messages",
-                        layout="bubble",
-                        placeholder="Your conversation with AI will appear here...",
+                    # chatbot_conversation_history = gr.Chatbot(
+                    #     label="{cha@tty cod:r}",
+                    #     type="messages",
+                    #     layout="bubble",
+                    #     placeholder="Your conversation with AI will appear here...",
+                    # )
+                    chk_show_user_input_preview = gr.Checkbox(
+                        value=False,
+                        label="Preview question (Markdown formatted)",
                     )
-                    with gr.Row(equal_height=True):
-                        with gr.Column(scale=3):
-                            chk_show_user_input_preview = gr.Checkbox(
-                                value=False,
-                                label="Preview question (Markdown formatted)",
-                            )
-                            input_user_question = gr.TextArea(
-                                label="Question (in Markdown)",
-                                placeholder="Enter the coding question that you want to ask...",
-                                lines=5,
-                                elem_id="user_question",
-                            )
-                            user_input_preview = gr.Markdown(visible=False)
-                        btn_code = gr.Button(
-                            scale=1,
-                            value="Let's code!",
-                            variant="primary",
-                        )
+                    input_user_question = gr.TextArea(
+                        label="Question (in Markdown)",
+                        placeholder="Enter the coding question that you want to ask...",
+                        lines=5,
+                        elem_id="user_question",
+                    )
+                    user_input_preview = gr.Markdown(visible=False)
+                    btn_code = gr.Button(
+                        value="Let's code!",
+                        variant="primary",
+                    )
                     with gr.Accordion(label="Code evaluation", open=False):
+                        gr.Markdown(
+                            "Provide test cases to evaluate the code. _These test cases will not be sent to the AI model_."
+                        )
                         with gr.Row(equal_height=True):
                             input_test_cases_in = gr.Textbox(
                                 label="Test case input", scale=1
@@ -388,18 +376,18 @@ class GradioApp:
                             value=10,
                         )
                 with gr.Column(elem_id="ui_main_right"):
-                    gr.Markdown("# Solution")
-                    output_reasoning = gr.Markdown(
-                        label="Reasoning",
-                        show_label=True,
-                        line_breaks=True,
-                    )
-                    output_pseudocode = gr.Code(label="Pseudocode", show_label=True)
-                    output_code = gr.Code(
-                        label="Python code",
-                        show_label=True,
-                        language="python",
-                    )
+                    with gr.Accordion(label="Generated solution", open=True):
+                        output_reasoning = gr.Markdown(
+                            label="Reasoning",
+                            show_label=True,
+                            line_breaks=True,
+                        )
+                        output_pseudocode = gr.Code(label="Pseudocode", show_label=True)
+                        output_code = gr.Code(
+                            label="Python code",
+                            show_label=True,
+                            language="python",
+                        )
             # Button actions
             btn_theme_toggle.click(
                 None,
@@ -410,13 +398,11 @@ class GradioApp:
             btn_code.click(
                 self.find_solution,
                 inputs=[
-                    chatbot_conversation_history,
                     input_user_question,
                     slider_runtime_limit,
                     list_test_cases,
                 ],
                 outputs=[
-                    chatbot_conversation_history,
                     output_reasoning,
                     output_pseudocode,
                     output_code,
@@ -469,11 +455,16 @@ class GradioApp:
     def run(self):
         """Run the Gradio app by launching a server."""
         self.construct_interface()
+        allowed_paths = [
+            f"{os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}/{constants.PROJECT_LOGO_PATH}"
+        ]
+        ic(allowed_paths)
         self.interface.queue().launch(
             server_name=self._gradio_host,
             server_port=self._gradio_port,
             show_api=True,
             show_error=True,
+            allowed_paths=allowed_paths,
         )
 
 

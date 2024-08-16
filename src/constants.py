@@ -28,6 +28,7 @@ TRUE_VALUES_LIST = ["true", "yes", "t", "y", "on"]
 PROJECT_GIT_REPO_URL = "https://github.com/anirbanbasu/chatty-coder"
 PROJECT_GIT_REPO_LABEL = "GitHub repository"
 PROJECT_NAME = "chatty-coder"
+PROJECT_LOGO_PATH = "assets/logo-embed.png"
 
 HTTP_TARGET_BLANK = "_blank"
 
@@ -53,8 +54,11 @@ AGENT_STATE__KEY_RUNTIME_LIMIT = "runtime_limit"
 AGENT_STATE__KEY_STATUS = "status"
 AGENT_STATE__KEY_DRAFT = "draft"
 
-CHAIN_DICT__KEY_INPUT = "input"
-CHAIN_DICT__KEY_EXAMPLES = "examples"
+CHATBOT__ROLE_USER = "user"
+CHATBOT__ROLE_AGENT = "assistant"
+CHATBOT__ROLE_SYSTEM = "system"
+CHATBOT__ROLE_LABEL = "role"
+CHATBOT__MESSAGE_CONTENT = "content"
 
 AGENT_NODE__EVALUATE_STATUS_SUCCESS = "success"
 AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES = "no test cases"
@@ -119,8 +123,7 @@ Please respond with a Python 3 solution to the given problem below.
 
 First, output a reasoning through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
 Then, output a pseudocode in Pascal to implement your concept solution.
-Then, output a well-documented working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
-Finally, output a one sentence summary describing what your solution does, as if you are explaining your solution to the human user.
+Finally, a well-documented working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}
@@ -135,8 +138,7 @@ Please respond with a Python 3 solution to the given problem below.
 
 First, output a reasoning through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
 Then, output a pseudocode in Pascal to implement your concept solution.
-Then, output a well-documented working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
-Finally, output a one sentence summary describing what your solution does, as if you are explaining your solution to the human user.
+Finally, a well-documented working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}
