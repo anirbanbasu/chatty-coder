@@ -191,7 +191,11 @@ class GradioApp:
         ic(self._llm_provider, self._llm)
 
     def find_solution(
-        self, user_question: str, runtime_limit: int, test_cases: list[TestCase] = None
+        self,
+        chat_history: list[dict],
+        user_question: str,
+        runtime_limit: int,
+        test_cases: list[TestCase] = None,
     ):
         """
         Generator function to find a coding solution to the user question.
@@ -226,6 +230,9 @@ class GradioApp:
         coder_agent = MultiAgentOrchestrator(llm=self._llm, prompt=prompt)
         coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": "1", "k": 3}}
+        chat_history.append({"role": "user", "content": user_question})
+        # Show the user message right away
+        yield [chat_history, None, None, None]
         # FIXME: Stream mode is not working as expected. Need to improve.
         # Note that this streams the results by graph step, not by individual messages.
         result_iterator = coder_agent.agent_graph.stream(
@@ -246,7 +253,16 @@ class GradioApp:
                 ][-1]
                 if coder_output:
                     json_dict = coder_output.content[0]
+                    chat_history.append(
+                        {
+                            "role": "assistant",
+                            "content": json_dict[
+                                constants.PYDANTIC_MODEL__CODE_OUTPUT__SUMMARY
+                            ],
+                        }
+                    )
                     yield [
+                        chat_history,
                         json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
                         json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
                         json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
@@ -321,25 +337,30 @@ class GradioApp:
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
                     gr.Markdown("# Coding challenge")
-                    gr.Chatbot(
-                        bubble_full_width=True,
-                        likeable=True,
+                    chatbot_conversation_history = gr.Chatbot(
+                        label="{cha@tty cod:r}",
+                        type="messages",
+                        layout="bubble",
                         placeholder="Your conversation with AI will appear here...",
                     )
-                    btn_code = gr.Button(
-                        value="Let's code!",
-                        variant="primary",
-                    )
-                    chk_show_user_input_preview = gr.Checkbox(
-                        value=False, label="Preview question (Markdown formatted)"
-                    )
-                    input_user_question = gr.TextArea(
-                        label="Question (in Markdown)",
-                        placeholder="Enter the coding question that you want to ask...",
-                        lines=10,
-                        elem_id="user_question",
-                    )
-                    user_input_preview = gr.Markdown(visible=False)
+                    with gr.Row(equal_height=True):
+                        with gr.Column(scale=3):
+                            chk_show_user_input_preview = gr.Checkbox(
+                                value=False,
+                                label="Preview question (Markdown formatted)",
+                            )
+                            input_user_question = gr.TextArea(
+                                label="Question (in Markdown)",
+                                placeholder="Enter the coding question that you want to ask...",
+                                lines=5,
+                                elem_id="user_question",
+                            )
+                            user_input_preview = gr.Markdown(visible=False)
+                        btn_code = gr.Button(
+                            scale=1,
+                            value="Let's code!",
+                            variant="primary",
+                        )
                     with gr.Accordion(label="Code evaluation", open=False):
                         with gr.Row(equal_height=True):
                             input_test_cases_in = gr.Textbox(
@@ -388,8 +409,18 @@ class GradioApp:
 
             btn_code.click(
                 self.find_solution,
-                inputs=[input_user_question, slider_runtime_limit, list_test_cases],
-                outputs=[output_reasoning, output_pseudocode, output_code],
+                inputs=[
+                    chatbot_conversation_history,
+                    input_user_question,
+                    slider_runtime_limit,
+                    list_test_cases,
+                ],
+                outputs=[
+                    chatbot_conversation_history,
+                    output_reasoning,
+                    output_pseudocode,
+                    output_code,
+                ],
                 api_name="get_coding_solution",
             )
 

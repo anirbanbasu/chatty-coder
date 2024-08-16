@@ -194,13 +194,9 @@ class MultiAgentOrchestrator:
         """
         # Get the inputs for the solver
         inputs = {
-            # FIXME: Check if this is a human message at all! Must be able to parse all the messages.
-            # constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES][
-            #     -1
-            # ].content
             constants.CHAIN_DICT__KEY_INPUT: state[constants.AGENT_STATE__KEY_MESSAGES]
         }
-        ic(inputs[constants.CHAIN_DICT__KEY_INPUT])
+        last_message_from_human = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
         ic(state)
@@ -229,6 +225,7 @@ class MultiAgentOrchestrator:
             # )
         )
         ic(response)
+        state[constants.AGENT_STATE__KEY_MESSAGES].append(response)
         # FIXME: Why do we need this? `OllamaFunctions`, for example, does not output `content`.
         # if not response.content:
         #     return {
@@ -242,7 +239,7 @@ class MultiAgentOrchestrator:
                 constants.AGENT_STATE__KEY_DRAFT: (False),
             }
             if state[constants.AGENT_STATE__KEY_DRAFT]
-            else {output_key: [response]}
+            else {output_key: [last_message_from_human, response]}
         )
 
     def draft_solve(self, state: AgentState) -> dict:
