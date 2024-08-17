@@ -68,25 +68,13 @@ class CoderOutput(BaseModel):
     code: str = Field(..., description="Python code implementation for the solution.")
 
 
-class MultiAgentOrchestrator:
-    def __init__(self, llm: BaseChatModel, prompt: ChatPromptTemplate):
+class MultiAgentDirectedGraph:
+    def __init__(self, llm: BaseChatModel, solver_prompt: ChatPromptTemplate):
         self._llm = llm
-        draft_solver_messages = [
-            ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
-            ("human", "{input}"),
-        ]
-        self._draft_solver_prompt = ChatPromptTemplate.from_messages(
-            messages=draft_solver_messages
+        self._solver_agent = solver_prompt | self._llm.with_structured_output(
+            CoderOutput
         )
-        self._runnable_draft_solver = (
-            self._draft_solver_prompt | self._llm.with_structured_output(CoderOutput)
-        )
-        # solver_messages = [
-        #     ("system", constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT),
-        #     ("human", "{input}"),
-        # ]
-        # self._solver_prompt = ChatPromptTemplate.from_messages(messages=solver_messages)
-        self._runnable_solver = prompt | self._llm.with_structured_output(CoderOutput)
+        # This is NOT an agent and it should not be.
         self._evaluator = CodeExecutor()
         # self._retriever = BM25Retriever.from_texts(
         #     [self.format_example(row) for row in train_ds]
@@ -115,7 +103,7 @@ class MultiAgentOrchestrator:
         """
         test_cases_str = "\n".join(
             [
-                f"<test id={i}>\n{test_case}\n</test>"
+                f"<test id='{i}'>\n{test_case}\n</test>"
                 for i, test_case in enumerate(test_cases)
             ]
         )
@@ -180,24 +168,18 @@ class MultiAgentOrchestrator:
             else constants.AGENT_STATE__KEY_MESSAGES
         )
         if has_examples:
-            # output_key = constants.AGENT_STATE__KEY_MESSAGES
             # Retrieve examples to solve the problem
             inputs[constants.AGENT_STATE__KEY_EXAMPLES] = state[
                 constants.AGENT_STATE__KEY_EXAMPLES
             ]
         else:
             inputs[constants.AGENT_STATE__KEY_EXAMPLES] = constants.EMPTY_STRING
-        response = self.pydantic_to_ai_message(
-            # Use the draft solver only if the `draft` flag is set in the state
-            self._runnable_draft_solver.invoke(inputs)
-            if state[constants.AGENT_STATE__KEY_DRAFT] is True
-            else self._runnable_solver.invoke(inputs)
-        )
+        response = self.pydantic_to_ai_message(self._solver_agent.invoke(inputs))
         ic(response)
         return (
             {
                 output_key: [response],
-                constants.AGENT_STATE__KEY_DRAFT: (False),
+                constants.AGENT_STATE__KEY_DRAFT: False,
             }
             if state[constants.AGENT_STATE__KEY_DRAFT]
             else {output_key: [response]}
@@ -244,7 +226,7 @@ class MultiAgentOrchestrator:
         """
         ic(f"State in evaluate: {state}")
         test_cases = state[constants.AGENT_STATE__KEY_TEST_CASES]
-        # Extract the `AIMessage` that is expected to contain the code from the last call.
+        # Extract the `AIMessage` that is expected to contain the code from the last call to the solver that was NOT to generate a candidate solution.
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         # ai_message is a list of dictionaries.
         json_dict = ai_message.content[0]
@@ -268,7 +250,9 @@ class MultiAgentOrchestrator:
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
                     # self.format_tool_message(repr(e), ai_message)
-                    FunctionMessage(content=repr(e), name="evaluate")
+                    FunctionMessage(
+                        content=repr(e), name=constants.AGENT_STATE_GRAPH_NODE__EVALUATE
+                    )
                 ]
             }
         num_test_cases = len(test_cases) if test_cases is not None else 0
@@ -298,14 +282,16 @@ class MultiAgentOrchestrator:
             }
 
         responses = "\n".join(
-            [f"<test id={i}>\n{r}\n</test>" for i, r in enumerate(test_results)]
+            [f"<test id='{i}'>\n{r}\n</test>" for i, r in enumerate(test_results)]
         )
         response = f"Incorrect submission. Please review the failures reported below and respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
 
         return {
             constants.AGENT_STATE__KEY_MESSAGES: [
                 # self.format_tool_message(response, ai_message)
-                FunctionMessage(content=response, name="evaluate")
+                FunctionMessage(
+                    content=response, name=constants.AGENT_STATE_GRAPH_NODE__EVALUATE
+                )
             ]
         }
 
@@ -313,13 +299,16 @@ class MultiAgentOrchestrator:
         builder = StateGraph(AgentState)
         # builder.add_node("draft", self.draft_solve)
         # builder.add_node("retrieve", self.retrieve_examples)
-        builder.add_node("solve", self.solve)
-        builder.add_node("evaluate", self.evaluate)
+        builder.add_node(constants.AGENT_STATE_GRAPH_NODE__SOLVE, self.solve)
+        builder.add_node(constants.AGENT_STATE_GRAPH_NODE__EVALUATE, self.evaluate)
         # Add connectivity
-        builder.add_edge(START, "solve")
+        builder.add_edge(START, constants.AGENT_STATE_GRAPH_NODE__SOLVE)
         # builder.add_edge("draft", "retrieve")
         # builder.add_edge("retrieve", "solve")
-        builder.add_edge("solve", "evaluate")
+        builder.add_edge(
+            constants.AGENT_STATE_GRAPH_NODE__SOLVE,
+            constants.AGENT_STATE_GRAPH_NODE__EVALUATE,
+        )
 
         def control_edge(state: AgentState):
             if (
@@ -329,12 +318,17 @@ class MultiAgentOrchestrator:
                 == constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
             ):
                 return END
-            return "solve"
+            return constants.AGENT_STATE_GRAPH_NODE__SOLVE
 
         builder.add_conditional_edges(
-            "evaluate", control_edge, {END: END, "solve": "solve"}
+            constants.AGENT_STATE_GRAPH_NODE__EVALUATE,
+            control_edge,
+            {
+                END: END,
+                constants.AGENT_STATE_GRAPH_NODE__SOLVE: constants.AGENT_STATE_GRAPH_NODE__SOLVE,
+            },
         )
-        builder.add_edge("solve", END)
+        builder.add_edge(constants.AGENT_STATE_GRAPH_NODE__SOLVE, END)
         connection = sqlite3.connect(":memory:", check_same_thread=False)
         checkpointer = SqliteSaver(conn=connection)
         self.agent_graph = builder.compile(checkpointer=checkpointer, debug=False)

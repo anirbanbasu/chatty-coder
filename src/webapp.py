@@ -15,9 +15,8 @@
 
 from dotenv import load_dotenv
 import uuid
-import os
 
-from coder_agent import MultiAgentOrchestrator, TestCase
+from coder_agent import MultiAgentDirectedGraph, TestCase
 from utils import parse_env
 
 try:
@@ -226,7 +225,7 @@ class GradioApp:
                 ),
             ],
         )
-        coder_agent = MultiAgentOrchestrator(llm=self._llm, prompt=prompt)
+        coder_agent = MultiAgentDirectedGraph(llm=self._llm, solver_prompt=prompt)
         coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": uuid.uuid4().hex, "k": 3}}
         graph_input = {
@@ -240,10 +239,10 @@ class GradioApp:
             config=config,
         )
         for result in result_iterator:
-            if "solve" in result:
-                coder_output: AIMessage = result["solve"][
-                    constants.AGENT_STATE__KEY_MESSAGES
-                ][-1]
+            if constants.AGENT_STATE_GRAPH_NODE__SOLVE in result:
+                coder_output: AIMessage = result[
+                    constants.AGENT_STATE_GRAPH_NODE__SOLVE
+                ][constants.AGENT_STATE__KEY_MESSAGES][-1]
                 if coder_output:
                     json_dict = coder_output.content[0]
                     yield [
@@ -295,7 +294,6 @@ class GradioApp:
 
     def construct_interface(self):
         """Construct the Gradio user interface and make it available through the `interface` property of this class."""
-        gr.set_static_paths(paths=[constants.PROJECT_LOGO_PATH])
         with gr.Blocks(
             # See theming guide at https://www.gradio.app/guides/theming-guide
             # theme="gstaff/xkcd",
@@ -306,19 +304,22 @@ class GradioApp:
             fill_height=True,
             css=constants.CSS__GRADIO_APP,
             analytics_enabled=False,
+            # Delete the cache content every day that is older than a day
+            delete_cache=(86400, 86400),
         ) as self.interface:
+            gr.set_static_paths(paths=[constants.PROJECT_LOGO_PATH])
             with gr.Row(elem_id="ui_header", equal_height=True):
                 with gr.Column(scale=10):
                     gr.HTML(
-                        """
+                        f"""
                             <img
                                 width="384"
                                 height="96"
                                 style="filter: invert(0.5);"
                                 alt="chatty-coder logo"
-                                src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
+                                src="/file={constants.PROJECT_LOGO_PATH}" />
                         """,
-                        # "/file=assets/logo-embed.svg"
+                        # "/file=assets/logo-embed.svg" or "file/assets/logo-embed.svg"?
                         # "https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg"
                     )
                 with gr.Column(scale=3):
@@ -455,16 +456,17 @@ class GradioApp:
     def run(self):
         """Run the Gradio app by launching a server."""
         self.construct_interface()
-        allowed_paths = [
-            f"{os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}/{constants.PROJECT_LOGO_PATH}"
+        allowed_static_file_paths = [
+            constants.PROJECT_LOGO_PATH,
         ]
-        ic(allowed_paths)
+        ic(allowed_static_file_paths)
         self.interface.queue().launch(
             server_name=self._gradio_host,
             server_port=self._gradio_port,
             show_api=True,
             show_error=True,
-            allowed_paths=allowed_paths,
+            allowed_paths=allowed_static_file_paths,
+            enable_monitoring=True,
         )
 
 

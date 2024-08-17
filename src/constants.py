@@ -28,7 +28,7 @@ TRUE_VALUES_LIST = ["true", "yes", "t", "y", "on"]
 PROJECT_GIT_REPO_URL = "https://github.com/anirbanbasu/chatty-coder"
 PROJECT_GIT_REPO_LABEL = "GitHub repository"
 PROJECT_NAME = "chatty-coder"
-PROJECT_LOGO_PATH = "assets/logo-embed.png"
+PROJECT_LOGO_PATH = "assets/logo-embed.svg"
 
 HTTP_TARGET_BLANK = "_blank"
 
@@ -45,6 +45,12 @@ EXECUTOR_MESSAGE__PASSED = "Passed"
 EXECUTOR_MESSAGE__FAILED = "Failed"
 EXECUTOR_MESSAGE__WRONG_ANSWER = "Wrong answer"
 EXECUTOR_MESSAGE__NO_RESULTS = "No result returned"
+
+AGENT_STATE_GRAPH_NODE__DRAFT_SOLVE = "draft_solve"
+AGENT_STATE_GRAPH_NODE__DRAFT_REVIEW = "draft_review"
+AGENT_STATE_GRAPH_NODE__SOLVE = "solve"
+AGENT_STATE_GRAPH_NODE__EVALUATE = "evaluate"
+
 
 AGENT_STATE__KEY_CANDIDATE = "candidate"
 AGENT_STATE__KEY_EXAMPLES = "examples"
@@ -121,9 +127,9 @@ You are a world-class Python programmer. You write concise and well-documented c
 
 Please respond with a Python 3 solution to the given problem below.
 
-First, output a reasoning through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
-Then, output a pseudocode in Pascal to implement your concept solution.
-Finally, a well-documented working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+First, output a `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
+Then, output a `pseudocode` in Pascal to implement your concept solution.
+Finally, a well-documented working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}
@@ -136,9 +142,9 @@ You are a world-class Python programmer. You write concise and well-documented c
 
 Please respond with a Python 3 solution to the given problem below.
 
-First, output a reasoning through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
-Then, output a pseudocode in Pascal to implement your concept solution.
-Finally, a well-documented working Python 3 code for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+First, output a `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
+Then, output a `pseudocode` in Pascal to implement your concept solution.
+Finally, a well-documented working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}
@@ -158,9 +164,8 @@ CSS__GRADIO_APP = """
 """
 
 JS__DARK_MODE_TOGGLE = """
-                            () => {
-                                document.body.classList.toggle('dark');
-                                // document.querySelector('gradio-app').style.backgroundColor = 'var(--color-background-primary)';
-                                document.querySelector('gradio-app').style.background = 'var(--body-background-fill)';
-                            }
-                        """
+    () => {
+        document.body.classList.toggle('dark');
+        document.querySelector('gradio-app').style.background = 'var(--body-background-fill)';
+    }
+"""
