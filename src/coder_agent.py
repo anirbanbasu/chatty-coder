@@ -174,7 +174,10 @@ class MultiAgentDirectedGraph:
             ]
         else:
             inputs[constants.AGENT_STATE__KEY_EXAMPLES] = constants.EMPTY_STRING
-        response = self.pydantic_to_ai_message(self._solver_agent.invoke(inputs))
+
+        llm_response = self._solver_agent.invoke(inputs)
+        ic(llm_response)
+        response = self.pydantic_to_ai_message(llm_response)
         ic(response)
         return (
             {
@@ -238,6 +241,11 @@ class MultiAgentDirectedGraph:
                     )
                 ]
             }
+        num_test_cases = len(test_cases) if test_cases is not None else 0
+        if num_test_cases == 0:
+            return {
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
+            }
         try:
             # Extract the code from the tool call.
             code: str = json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
@@ -254,11 +262,6 @@ class MultiAgentDirectedGraph:
                         content=repr(e), name=constants.AGENT_STATE_GRAPH_NODE__EVALUATE
                     )
                 ]
-            }
-        num_test_cases = len(test_cases) if test_cases is not None else 0
-        if num_test_cases == 0:
-            return {
-                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
             }
         succeeded = 0
         test_results = []

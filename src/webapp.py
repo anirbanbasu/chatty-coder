@@ -70,6 +70,8 @@ class GradioApp:
             default_value=constants.ENV_VAR_VALUE__LLM_PROVIDER,
         )
         if self._llm_provider == "Ollama":
+            # ChatOllama does not support structured outputs: https://python.langchain.com/v0.2/docs/integrations/chat/ollama/
+            # Yet, the API docs seems to suggest that it does: https://api.python.langchain.com/en/latest/chat_models/langchain_community.chat_models.ollama.ChatOllama.html#langchain_community.chat_models.ollama.ChatOllama.with_structured_output
             self._llm = ChatOllama(
                 base_url=parse_env(
                     constants.ENV_VAR_NAME__LLM_OLLAMA_URL,

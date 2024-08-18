@@ -130,6 +130,7 @@ Please respond with a Python 3 solution to the given problem below.
 First, output a `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
 Then, output a `pseudocode` in Pascal to implement your concept solution.
 Finally, a well-documented working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+Please format your response as JSON, using `reasoning`, `pseudocode`, and `code` as attributes.
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}
@@ -145,6 +146,7 @@ Please respond with a Python 3 solution to the given problem below.
 First, output a `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
 Then, output a `pseudocode` in Pascal to implement your concept solution.
 Finally, a well-documented working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+Please format your response as JSON, using `reasoning`, `pseudocode`, and `code` as attributes.
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}
