@@ -18,6 +18,7 @@ import uuid
 
 from coder_agent import CoderOutput, MultiAgentDirectedGraph, TestCase
 from utils import parse_env
+import json
 
 try:
     from icecream import ic
@@ -244,23 +245,23 @@ class GradioApp:
                     constants.AGENT_STATE__KEY_MESSAGES
                 ][-1]
                 # FIXME: Why are there more than one tool calls to the same tool?
-                if (
-                    response.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
-                    == CoderOutput.__name__
-                ):
-                    tool_call_args = response.tool_calls[-1][
-                        constants.AGENT_TOOL_CALL__ARGS
-                    ]
-                    # coder_output: CoderOutput = CoderOutput.parse_json(tool_call_args)
-                    yield [
-                        tool_call_args[
-                            constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING
-                        ],
-                        tool_call_args[
-                            constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE
-                        ],
-                        tool_call_args[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
-                    ]
+                solution: dict = None
+                if response.tool_calls:
+                    if (
+                        response.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
+                        == CoderOutput.__name__
+                    ):
+                        solution = response.tool_calls[-1][
+                            constants.AGENT_TOOL_CALL__ARGS
+                        ]
+                else:
+                    solution = json.loads(response.content)
+                ic(solution)
+                yield [
+                    solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
+                    solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
+                    solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
+                ]
 
     def add_test_case(
         self, test_cases: list[TestCase] | None, test_case_in: str, test_case_out: str

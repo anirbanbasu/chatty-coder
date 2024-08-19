@@ -134,10 +134,12 @@ Then, output a complete `pseudocode` in Pascal to implement your concept solutio
 Finally, a well-documented and working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
 Please format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys.
 
-Optional examples of similar problems and solutions (may not be in Python):
+You may be provided below with ptional examples of similar problems and solutions (may not be in Python).
+[BEGIN EXAMPLES]
 {examples}
+[END EXAMPLES]
 
-Given problem and your conversation with the user about it:
+The problem and your conversation with the user about it are given below.
 """
 
 

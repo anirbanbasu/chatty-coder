@@ -31,6 +31,7 @@ from langchain_core.messages import (
 from langchain_core.runnables import RunnableConfig
 
 
+import json
 from code_executor import CodeExecutor
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph, START
@@ -172,7 +173,6 @@ class MultiAgentDirectedGraph:
         }
         # Have we been presented with examples?
         has_examples = bool(state.get(constants.AGENT_STATE__KEY_EXAMPLES))
-        ic(f"State in solve: {state}")
         # If `draft`` is requested in the state then output a candidate solution
         output_key = (
             constants.AGENT_STATE__KEY_CANDIDATE
@@ -234,33 +234,36 @@ class MultiAgentDirectedGraph:
         Returns:
             dict: The updated state of the agent.
         """
-        ic(f"State in evaluate: {state}")
         test_cases = state[constants.AGENT_STATE__KEY_TEST_CASES]
         # Extract the `AIMessage` that is expected to contain the code from the last call to the solver that was NOT to generate a candidate solution.
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         # ai_message is a list of dictionaries.
         # tool_call_args = ai_message.content[0]
-        if (
-            ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
-            != CoderOutput.__name__
-        ):
-            return {
-                constants.AGENT_STATE__KEY_MESSAGES: [
-                    self.format_as_tool_message(
-                        response=f"Invalid tool call `{ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]}`. You should call the tool `{CoderOutput.__name__}` to format your response.",
-                        ai_message=ai_message,
-                    )
-                ],
-                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_ERROR,
-            }
-        tool_call_args = ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__ARGS]
-        # Extract the code from the tool call.
-        code: str = tool_call_args[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
+        solution: dict = None
+        if ai_message.tool_calls:
+            solution = ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__ARGS]
+            if (
+                ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
+                != CoderOutput.__name__
+            ):
+                return {
+                    constants.AGENT_STATE__KEY_MESSAGES: [
+                        self.format_as_tool_message(
+                            response=f"Invalid tool call `{ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]}`. You should call the tool `{CoderOutput.__name__}` to format your response.",
+                            ai_message=ai_message,
+                        )
+                    ],
+                    constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_ERROR,
+                }
+        else:
+            solution = json.loads(ai_message.content)
+        # Extract the code from the solution.
+        code: str = solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
         if not code:
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
                     self.format_as_tool_message(
-                        response="No code was generated. Please try again using the correct Python code.",
+                        response="No code was generated. Please generate correct Python code.",
                         ai_message=ai_message,
                     )
                 ],
