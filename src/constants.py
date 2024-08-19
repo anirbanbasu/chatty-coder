@@ -66,12 +66,14 @@ CHATBOT__ROLE_SYSTEM = "system"
 CHATBOT__ROLE_LABEL = "role"
 CHATBOT__MESSAGE_CONTENT = "content"
 
+AGENT_NODE__EVALUATE_STATUS_IN_PROGRESS = "in-progress"
 AGENT_NODE__EVALUATE_STATUS_SUCCESS = "success"
+AGENT_NODE__EVALUATE_STATUS_ERROR = "error"
 AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES = "no test cases"
 
 AGENT_TOOL_CALL__ARGS = "args"
 AGENT_TOOL_CALL__ID = "id"
-AGENT_TOOL_CALL__NAME_CODE_OUTPUT = "codeOutput"
+AGENT_TOOL_CALL__NAME = "name"
 
 TEST_CASE__KEY_INPUTS = "inputs"
 TEST_CASE__KEY_OUTPUTS = "outputs"
@@ -121,32 +123,16 @@ ENV_VAR_NAME__LLM_REPEAT_PENALTY = "LLM__REPEAT_PENALTY"
 ENV_VAR_VALUE__LLM_REPEAT_PENALTY = "1.1"
 ENV_VAR_NAME__LLM_SEED = "LLM__SEED"
 ENV_VAR_VALUE__LLM_SEED = "1"
-ENV_VAR_NAME__LLM_SYSTEM_PROMPT = "LLM__SYSTEM_PROMPT"
+ENV_VAR_NAME__LLM_CODER_SYSTEM_PROMPT = "LLM__CODER_SYSTEM_PROMPT"
 ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT = """
 You are a world-class Python programmer. You write concise and well-documented code following the PEP8 style guide.
 
 Please respond with a Python 3 solution to the given problem below.
 
-First, output a `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
-Then, output a `pseudocode` in Pascal to implement your concept solution.
-Finally, a well-documented working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
-Please format your response as JSON, using `reasoning`, `pseudocode`, and `code` as attributes.
-
-Optional examples of similar problems and solutions (may not be in Python):
-{examples}
-
-Given problem and your conversation with the user about it:
-"""
-
-ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT = """
-You are a world-class Python programmer. You write concise and well-documented code following the PEP8 style guide.
-
-Please respond with a Python 3 solution to the given problem below.
-
-First, output a `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
-Then, output a `pseudocode` in Pascal to implement your concept solution.
-Finally, a well-documented working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
-Please format your response as JSON, using `reasoning`, `pseudocode`, and `code` as attributes.
+First, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
+Then, output a complete `pseudocode` in Pascal to implement your concept solution.
+Finally, a well-documented and working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+Please format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys.
 
 Optional examples of similar problems and solutions (may not be in Python):
 {examples}

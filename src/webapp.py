@@ -16,7 +16,7 @@
 from dotenv import load_dotenv
 import uuid
 
-from coder_agent import MultiAgentDirectedGraph, TestCase
+from coder_agent import CoderOutput, MultiAgentDirectedGraph, TestCase
 from utils import parse_env
 
 try:
@@ -188,7 +188,6 @@ class GradioApp:
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {self._llm_provider}")
-        ic(self._llm_provider, self._llm)
 
     def find_solution(
         self,
@@ -218,7 +217,7 @@ class GradioApp:
             messages=[
                 SystemMessagePromptTemplate.from_template(
                     template=parse_env(
-                        constants.ENV_VAR_NAME__LLM_SYSTEM_PROMPT,
+                        constants.ENV_VAR_NAME__LLM_CODER_SYSTEM_PROMPT,
                         constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT,
                     )
                 ),
@@ -235,22 +234,32 @@ class GradioApp:
             constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
             constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
         }
-        ic(graph_input)
         result_iterator = coder_agent.agent_graph.stream(
             input=graph_input,
             config=config,
         )
         for result in result_iterator:
             if constants.AGENT_STATE_GRAPH_NODE__SOLVE in result:
-                coder_output: AIMessage = result[
-                    constants.AGENT_STATE_GRAPH_NODE__SOLVE
-                ][constants.AGENT_STATE__KEY_MESSAGES][-1]
-                if coder_output:
-                    json_dict = coder_output.content[0]
+                response: AIMessage = result[constants.AGENT_STATE_GRAPH_NODE__SOLVE][
+                    constants.AGENT_STATE__KEY_MESSAGES
+                ][-1]
+                # FIXME: Why are there more than one tool calls to the same tool?
+                if (
+                    response.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
+                    == CoderOutput.__name__
+                ):
+                    tool_call_args = response.tool_calls[-1][
+                        constants.AGENT_TOOL_CALL__ARGS
+                    ]
+                    # coder_output: CoderOutput = CoderOutput.parse_json(tool_call_args)
                     yield [
-                        json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
-                        json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
-                        json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
+                        tool_call_args[
+                            constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING
+                        ],
+                        tool_call_args[
+                            constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE
+                        ],
+                        tool_call_args[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
                     ]
 
     def add_test_case(
@@ -334,6 +343,10 @@ class GradioApp:
                     #     layout="bubble",
                     #     placeholder="Your conversation with AI will appear here...",
                     # )
+                    with gr.Accordion(
+                        label=f"{self._llm_provider} LLM configuration", open=False
+                    ):
+                        gr.JSON(value=self._llm.to_json(), show_label=False)
                     chk_show_user_input_preview = gr.Checkbox(
                         value=False,
                         label="Preview question (Markdown formatted)",
@@ -379,7 +392,10 @@ class GradioApp:
                             value=10,
                         )
                 with gr.Column(elem_id="ui_main_right"):
-                    with gr.Accordion(label="Generated solution", open=True):
+                    with gr.Accordion(
+                        label="Generated solution",
+                        open=True,
+                    ):
                         output_reasoning = gr.Markdown(
                             label="Reasoning",
                             show_label=True,

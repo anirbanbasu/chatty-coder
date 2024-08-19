@@ -15,17 +15,18 @@
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
+
+# from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.pydantic_v1 import BaseModel, Field
 from typing import Annotated
+from langchain_core.tools import BaseTool
 
 from typing_extensions import TypedDict
 
 from langgraph.graph.message import AnyMessage, add_messages
 from langchain_core.messages import (
     AIMessage,
-    HumanMessage,
     ToolMessage,
-    FunctionMessage,
 )
 from langchain_core.runnables import RunnableConfig
 
@@ -63,17 +64,28 @@ class AgentState(TypedDict):
 
 
 class CoderOutput(BaseModel):
+    """Useful to output the solution to the given coding problem in a structured format."""
+
     reasoning: str = Field(..., description="Reasoning for the conceptual solution.")
     pseudocode: str = Field(..., description="Pseudocode for the solution.")
     code: str = Field(..., description="Python code implementation for the solution.")
 
 
+# TODO: This is unnecessary? See: https://python.langchain.com/v0.1/docs/modules/model_io/chat/function_calling/
+class CoderOutputTool(BaseTool):
+    name = CoderOutput.__name__
+    description = "Useful to output the solution to the given coding problem in a structured format."
+    args_schema = CoderOutput
+
+    def _run(self, inputs: dict) -> dict:
+        # Is there anything to do here?
+        return inputs
+
+
 class MultiAgentDirectedGraph:
     def __init__(self, llm: BaseChatModel, solver_prompt: ChatPromptTemplate):
         self._llm = llm
-        self._solver_agent = solver_prompt | self._llm.with_structured_output(
-            CoderOutput
-        )
+        self._solver_agent = solver_prompt | self._llm.bind_tools([CoderOutput])
         # This is NOT an agent and it should not be.
         self._evaluator = CodeExecutor()
         # self._retriever = BM25Retriever.from_texts(
@@ -175,29 +187,28 @@ class MultiAgentDirectedGraph:
         else:
             inputs[constants.AGENT_STATE__KEY_EXAMPLES] = constants.EMPTY_STRING
 
-        llm_response = self._solver_agent.invoke(inputs)
-        ic(llm_response)
-        response = self.pydantic_to_ai_message(llm_response)
+        response = self._solver_agent.invoke(inputs)
         ic(response)
         return (
             {
                 output_key: [response],
                 constants.AGENT_STATE__KEY_DRAFT: False,
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_IN_PROGRESS,
             }
             if state[constants.AGENT_STATE__KEY_DRAFT]
-            else {output_key: [response]}
+            else {
+                output_key: [response],
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_IN_PROGRESS,
+            }
         )
 
     def draft_solve(self, state: AgentState) -> dict:
         state[constants.AGENT_STATE__KEY_DRAFT] = True
         return self.solve(state)
 
-    def pydantic_to_ai_message(
-        self, structured_message: BaseModel, id: str = None
-    ) -> AIMessage:
-        return AIMessage(content=[structured_message.dict()], id=id)
-
-    def format_tool_message(self, response: str, ai_message: AIMessage) -> ToolMessage:
+    def format_as_tool_message(
+        self, response: str, ai_message: AIMessage
+    ) -> ToolMessage:
         """
         Format the response as a tool message specifying the tool call ID.
 
@@ -208,13 +219,9 @@ class MultiAgentDirectedGraph:
         Returns:
             ToolMessage: The formatted tool message.
         """
-        # This is the node we will add to the agent graph.
-        # Most tool-calling APIs require that the `ToolMessage` contain the ID
-        # of the tool call that generated the message.
         return ToolMessage(
             content=response,
-            # tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
-            tool_call_id=ai_message.id,
+            tool_call_id=ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ID],
         )
 
     def evaluate(self, state: AgentState) -> dict:
@@ -232,14 +239,32 @@ class MultiAgentDirectedGraph:
         # Extract the `AIMessage` that is expected to contain the code from the last call to the solver that was NOT to generate a candidate solution.
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_MESSAGES][-1]
         # ai_message is a list of dictionaries.
-        json_dict = ai_message.content[0]
-        if not json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]:
+        # tool_call_args = ai_message.content[0]
+        if (
+            ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
+            != CoderOutput.__name__
+        ):
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
-                    HumanMessage(
-                        content="No code submitted. Please try again using the correct Python code."
+                    self.format_as_tool_message(
+                        response=f"Invalid tool call `{ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]}`. You should call the tool `{CoderOutput.__name__}` to format your response.",
+                        ai_message=ai_message,
                     )
-                ]
+                ],
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_ERROR,
+            }
+        tool_call_args = ai_message.tool_calls[-1][constants.AGENT_TOOL_CALL__ARGS]
+        # Extract the code from the tool call.
+        code: str = tool_call_args[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
+        if not code:
+            return {
+                constants.AGENT_STATE__KEY_MESSAGES: [
+                    self.format_as_tool_message(
+                        response="No code was generated. Please try again using the correct Python code.",
+                        ai_message=ai_message,
+                    )
+                ],
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_ERROR,
             }
         num_test_cases = len(test_cases) if test_cases is not None else 0
         if num_test_cases == 0:
@@ -247,56 +272,54 @@ class MultiAgentDirectedGraph:
                 constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_NO_TEST_CASES
             }
         try:
-            # Extract the code from the tool call.
-            code: str = json_dict[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE]
             # Use PythonREPL to sanitise the code
             # See: https://api.python.langchain.com/en/latest/utilities/langchain_experimental.utilities.python.PythonREPL.html
             # FIXME: Why not use PythonREPL to run the code?
             code = CodeExecutor.sanitise_code(code)
+            succeeded = 0
+            test_results = []
+            # TODO: Enable parallel execution of test cases.
+            for test_case in test_cases:
+                input_data = test_case[constants.TEST_CASE__KEY_INPUTS]
+                expected_output = test_case[constants.TEST_CASE__KEY_OUTPUTS]
+                test_result = self._evaluator.check_correctness(
+                    code,
+                    input_data,
+                    expected_output,
+                    state[constants.AGENT_STATE__KEY_RUNTIME_LIMIT],
+                )
+                test_results.append(test_result)
+                if test_result == constants.EXECUTOR_MESSAGE__PASSED:
+                    succeeded += 1
+            pass_rate = succeeded / num_test_cases if num_test_cases else "N/A"
+            if pass_rate == 1:
+                return {
+                    constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
+                }
+
+            responses = "\n".join(
+                [f"<test id='{i}'>\n{r}\n</test>" for i, r in enumerate(test_results)]
+            )
+            response = f"Incorrect submission. Please review the failures reported below and respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
+
+            return {
+                constants.AGENT_STATE__KEY_MESSAGES: [
+                    self.format_tool_message(response, ai_message)
+                ],
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_ERROR,
+            }
         except Exception as e:
             # If there was an error extracting the code, return an error message as state.
             return {
                 constants.AGENT_STATE__KEY_MESSAGES: [
                     # self.format_tool_message(repr(e), ai_message)
-                    FunctionMessage(
-                        content=repr(e), name=constants.AGENT_STATE_GRAPH_NODE__EVALUATE
+                    self.format_as_tool_message(
+                        response=repr(e),
+                        ai_message=ai_message,
                     )
-                ]
+                ],
+                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_ERROR,
             }
-        succeeded = 0
-        test_results = []
-        # TODO: Enable parallel execution of test cases.
-        for test_case in test_cases:
-            input_data = test_case[constants.TEST_CASE__KEY_INPUTS]
-            expected_output = test_case[constants.TEST_CASE__KEY_OUTPUTS]
-            test_result = self._evaluator.check_correctness(
-                code,
-                input_data,
-                expected_output,
-                state[constants.AGENT_STATE__KEY_RUNTIME_LIMIT],
-            )
-            test_results.append(test_result)
-            if test_result == constants.EXECUTOR_MESSAGE__PASSED:
-                succeeded += 1
-        pass_rate = succeeded / num_test_cases if num_test_cases else "N/A"
-        if pass_rate == 1:
-            return {
-                constants.AGENT_STATE__KEY_STATUS: constants.AGENT_NODE__EVALUATE_STATUS_SUCCESS
-            }
-
-        responses = "\n".join(
-            [f"<test id='{i}'>\n{r}\n</test>" for i, r in enumerate(test_results)]
-        )
-        response = f"Incorrect submission. Please review the failures reported below and respond with updated code.\nPass rate: {pass_rate}\nResults:\n{responses}"
-
-        return {
-            constants.AGENT_STATE__KEY_MESSAGES: [
-                # self.format_tool_message(response, ai_message)
-                FunctionMessage(
-                    content=response, name=constants.AGENT_STATE_GRAPH_NODE__EVALUATE
-                )
-            ]
-        }
 
     def build_agent_graph(self):
         builder = StateGraph(AgentState)
