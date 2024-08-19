@@ -231,7 +231,11 @@ class GradioApp:
         coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": uuid.uuid4().hex, "k": 3}}
         graph_input = {
-            constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(content=user_question),
+            constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(
+                content=f"""[BEGIN PROBLEM]
+{user_question}
+[END PROBLEM]"""
+            ),
             constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
             constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
         }
