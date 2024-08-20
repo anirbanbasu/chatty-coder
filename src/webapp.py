@@ -16,9 +16,8 @@
 from dotenv import load_dotenv
 import uuid
 
-from coder_agent import CoderOutput, MultiAgentDirectedGraph, TestCase
+from agents import CoderOutput, AgentOrchestrator, TestCase
 from utils import parse_env
-import json
 
 try:
     from icecream import ic
@@ -33,6 +32,9 @@ from langchain_cohere import ChatCohere
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph.message import AnyMessage
+from langchain_core.runnables.graph import CurveStyle, NodeStyles
+import PIL.Image
+from io import BytesIO
 
 
 # from langchain_groq.chat_models import ChatGroq
@@ -55,7 +57,9 @@ class GradioApp:
 
     def __init__(self):
         """Default constructor for the Gradio app."""
+        # Load the environment variables
         ic(load_dotenv())
+        # Set Gradio server host and port
         self._gradio_host: str = parse_env(
             constants.ENV_VAR_NAME__GRADIO_SERVER_HOST,
             default_value=constants.ENV_VAR_VALUE__GRADIO_SERVER_HOST,
@@ -66,6 +70,7 @@ class GradioApp:
             type_cast=int,
         )
         ic(self._gradio_host, self._gradio_port)
+        # Setup LLM provider and LLM configuration
         self._llm_provider = parse_env(
             constants.ENV_VAR_NAME__LLM_PROVIDER,
             default_value=constants.ENV_VAR_VALUE__LLM_PROVIDER,
@@ -190,6 +195,31 @@ class GradioApp:
         else:
             raise ValueError(f"Unsupported LLM provider: {self._llm_provider}")
 
+        # Setup the agent orchestrator
+        solver_prompt = ChatPromptTemplate(
+            input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
+            input_types={constants.PROMPT_TEMPLATE__VAR_MESSAGES: AnyMessage},
+            partial_variables={
+                constants.PROMPT_TEMPLATE__PARTIAL_VAR__EXAMPLES: constants.EMPTY_STRING
+            },
+            messages=[
+                SystemMessagePromptTemplate.from_template(
+                    template=parse_env(
+                        constants.ENV_VAR_NAME__LLM_CODER_SYSTEM_PROMPT,
+                        constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT,
+                    )
+                ),
+                MessagesPlaceholder(
+                    variable_name=constants.PROMPT_TEMPLATE__VAR_MESSAGES
+                ),
+            ],
+        )
+
+        self._agent_orchestrator = AgentOrchestrator(
+            llm=self._llm, solver_prompt=solver_prompt
+        )
+        self._agent_orchestrator.build_agent_graph()
+
     def find_solution(
         self,
         user_question: str,
@@ -209,26 +239,6 @@ class GradioApp:
             str: The pseudocode for the solution.
             str: The Python code for the solution.
         """
-        prompt = ChatPromptTemplate(
-            input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
-            input_types={constants.PROMPT_TEMPLATE__VAR_MESSAGES: AnyMessage},
-            partial_variables={
-                constants.PROMPT_TEMPLATE__PARTIAL_VAR__EXAMPLES: constants.EMPTY_STRING
-            },
-            messages=[
-                SystemMessagePromptTemplate.from_template(
-                    template=parse_env(
-                        constants.ENV_VAR_NAME__LLM_CODER_SYSTEM_PROMPT,
-                        constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT,
-                    )
-                ),
-                MessagesPlaceholder(
-                    variable_name=constants.PROMPT_TEMPLATE__VAR_MESSAGES
-                ),
-            ],
-        )
-        coder_agent = MultiAgentDirectedGraph(llm=self._llm, solver_prompt=prompt)
-        coder_agent.build_agent_graph()
         config = {"configurable": {"thread_id": uuid.uuid4().hex, "k": 3}}
         graph_input = {
             constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(
@@ -239,7 +249,7 @@ class GradioApp:
             constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
             constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
         }
-        result_iterator = coder_agent.agent_graph.stream(
+        result_iterator = self._agent_orchestrator.agent_graph.stream(
             input=graph_input,
             config=config,
         )
@@ -248,18 +258,11 @@ class GradioApp:
                 response: AIMessage = result[constants.AGENT_STATE_GRAPH_NODE__SOLVE][
                     constants.AGENT_STATE__KEY_MESSAGES
                 ][-1]
-                # FIXME: Why are there more than one tool calls to the same tool?
-                solution: dict = None
-                if response.tool_calls:
-                    if (
-                        response.tool_calls[-1][constants.AGENT_TOOL_CALL__NAME]
-                        == CoderOutput.__name__
-                    ):
-                        solution = response.tool_calls[-1][
-                            constants.AGENT_TOOL_CALL__ARGS
-                        ]
-                else:
-                    solution = json.loads(response.content)
+                solution: dict = (
+                    self._agent_orchestrator.extract_dictionary_from_ai_message(
+                        ai_message=response, match_tool_call_name=CoderOutput.__name__
+                    )
+                )
                 ic(solution)
                 yield [
                     solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
@@ -327,40 +330,62 @@ class GradioApp:
             with gr.Row(elem_id="ui_header", equal_height=True):
                 with gr.Column(scale=10):
                     gr.HTML(
-                        f"""
+                        """
                             <img
                                 width="384"
                                 height="96"
                                 style="filter: invert(0.5);"
                                 alt="chatty-coder logo"
-                                src="/file={constants.PROJECT_LOGO_PATH}" />
+                                src="https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg" />
                         """,
-                        # "/file=assets/logo-embed.svg" or "file/assets/logo-embed.svg"?
+                        # "/file={constants.PROJECT_LOGO_PATH}"
                         # "https://raw.githubusercontent.com/anirbanbasu/chatty-coder/master/assets/logo-embed.svg"
                     )
                 with gr.Column(scale=3):
                     btn_theme_toggle = gr.Button("Toggle dark mode")
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
-                    # chatbot_conversation_history = gr.Chatbot(
-                    #     label="{cha@tty cod:r}",
-                    #     type="messages",
-                    #     layout="bubble",
-                    #     placeholder="Your conversation with AI will appear here...",
-                    # )
                     with gr.Accordion(
-                        label=f"{self._llm_provider} LLM configuration", open=False
+                        label=f"{self._llm_provider} LLM and agent orchestrator configuration",
+                        open=False,
                     ):
-                        gr.JSON(value=self._llm.to_json(), show_label=False)
+                        with gr.Group():
+                            gr.JSON(
+                                value=self._llm.to_json(),
+                                label=f"{self._llm_provider} LLM configuration",
+                                show_label=True,
+                            )
+                            gr.Image(
+                                value=PIL.Image.open(
+                                    BytesIO(
+                                        self._agent_orchestrator.agent_graph.get_graph().draw_mermaid_png(
+                                            curve_style=CurveStyle.BASIS,
+                                            # The node styles are SVG attributes, see: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute
+                                            node_colors=NodeStyles(
+                                                first="fill:#9ccc2b, fill-opacity:0.35, font-family:'monospace'",
+                                                last="fill:#cc2b2b, fill-opacity:0.25, font-family:'monospace'",
+                                                default="fill:#2ba9cc, fill-opacity:0.35, font-family:'monospace'",
+                                            ),
+                                        )
+                                    )
+                                ),
+                                label="Agent orchestrator graph",
+                                show_label=True,
+                                show_download_button=False,
+                                show_fullscreen_button=False,
+                                show_share_button=False,
+                                format="png",
+                            )
                     chk_show_user_input_preview = gr.Checkbox(
                         value=False,
                         label="Preview question (Markdown formatted)",
                     )
                     input_user_question = gr.TextArea(
-                        label="Question (in Markdown)",
-                        placeholder="Enter the coding question that you want to ask...",
+                        label="Question (in Markdown format)",
+                        placeholder="Enter the question for which you want a coding solution.",
                         lines=5,
                         elem_id="user_question",
+                        show_copy_button=True,
                     )
                     user_input_preview = gr.Markdown(visible=False)
                     btn_code = gr.Button(
@@ -371,47 +396,51 @@ class GradioApp:
                         gr.Markdown(
                             "Provide test cases to evaluate the code. _These test cases will not be sent to the AI model_."
                         )
-                        with gr.Row(equal_height=True):
-                            input_test_cases_in = gr.Textbox(
-                                label="Test case input", scale=1
+                        with gr.Group():
+                            with gr.Row(equal_height=True):
+                                input_test_cases_in = gr.Textbox(
+                                    label="Test case input (from stdin)", scale=1
+                                )
+                                input_test_cases_out = gr.Textbox(
+                                    label="Test case output (in stdout)", scale=1
+                                )
+                                btn_add_test_case = gr.Button("Add", scale=1)
+                            list_test_cases = gr.JSON(label="Test cases")
+                            with gr.Row(equal_height=True):
+                                test_case_id_to_delete = gr.Number(
+                                    label="Test case ID to delete",
+                                    minimum=0,
+                                    scale=2,
+                                )
+                                btn_delete_test_case = gr.Button(
+                                    "Delete", variant="stop", scale=1
+                                )
+                            slider_runtime_limit = gr.Slider(
+                                label="Runtime limit (in seconds)",
+                                minimum=5,
+                                maximum=35,
+                                step=1,
+                                value=10,
                             )
-                            input_test_cases_out = gr.Textbox(
-                                label="Test case output", scale=1
-                            )
-                            btn_add_test_case = gr.Button("Add", scale=1)
-                        list_test_cases = gr.JSON(label="Test cases")
-                        with gr.Row(equal_height=True):
-                            test_case_id_to_delete = gr.Number(
-                                label="Test case ID to delete",
-                                minimum=0,
-                                scale=2,
-                            )
-                            btn_delete_test_case = gr.Button(
-                                "Delete", variant="stop", scale=1
-                            )
-                        slider_runtime_limit = gr.Slider(
-                            label="Runtime limit (in seconds)",
-                            minimum=5,
-                            maximum=35,
-                            step=1,
-                            value=10,
-                        )
                 with gr.Column(elem_id="ui_main_right"):
                     with gr.Accordion(
                         label="Generated solution",
                         open=True,
                     ):
-                        output_reasoning = gr.Markdown(
-                            label="Reasoning",
-                            show_label=True,
-                            line_breaks=True,
-                        )
-                        output_pseudocode = gr.Code(label="Pseudocode", show_label=True)
-                        output_code = gr.Code(
-                            label="Python code",
-                            show_label=True,
-                            language="python",
-                        )
+                        with gr.Group():
+                            output_reasoning = gr.Markdown(
+                                label="Reasoning",
+                                show_label=True,
+                                line_breaks=True,
+                            )
+                            output_pseudocode = gr.Code(
+                                label="Pseudocode", show_label=True
+                            )
+                            output_code = gr.Code(
+                                label="Python code",
+                                show_label=True,
+                                language="python",
+                            )
             # Button actions
             btn_theme_toggle.click(
                 None,

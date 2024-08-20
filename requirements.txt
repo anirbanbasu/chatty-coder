@@ -6,8 +6,9 @@ python-dotenv
 icecream
 pytest
 
-# LangChain and LangGraph
+# LangChain, LangGraph and related stuff
 langgraph
+grandalf
 langgraph-checkpoint-sqlite
 langchain_community
 langchain-experimental

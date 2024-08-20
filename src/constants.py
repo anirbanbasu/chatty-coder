@@ -129,7 +129,8 @@ You are a world-class Python programmer. You write concise and well-documented c
 
 First, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution.
 Then, output a complete `pseudocode` in Pascal to implement your concept solution.
-Finally, output a well-documented and working Python 3 `code` for your solution. Do not use external libraries. Your code must be able to accept inputs from `sys.stdin` and write the final output to `sys.stdout` (or, to `sys.stderr` in case of errors).
+Finally, output a well-documented and working Python 3 `code` for your solution. Do not use external libraries.
+Make your Python code executable from the command line. Your code must accept all its inputs from `sys.stdin` and print the final output to `sys.stdout`.
 Please format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys.
 
 You may be provided below with examples of similar problems and solutions (may not be in Python).
@@ -137,7 +138,7 @@ You may be provided below with examples of similar problems and solutions (may n
 {examples}
 [END EXAMPLES]
 
-The problem and your interactions with the user about it are given below.
+The problem is given below.
 """
 
 
