@@ -152,8 +152,8 @@ class AgentOrchestrator:
         ai_message: AIMessage = state[constants.AGENT_STATE__KEY_CANDIDATE]
         if not ai_message.tool_calls:
             # We err here. To make more robust, you could loop back
-            raise ValueError("Draft agent did not produce a valid code block")
-        code = ai_message.tool_calls[0]["args"][
+            raise ValueError("Solver agent did not produce a valid code block")
+        code = ai_message.tool_calls[0][constants.AGENT_TOOL_CALL__ARGS][
             constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE
         ]
         examples_str = "\n".join(
@@ -161,10 +161,10 @@ class AgentOrchestrator:
         )
         examples_str = f"""
             Here are some example solutions of similar problems.
-            <Examples>
+            [BEGIN EXAMPLES]
             {examples_str}
-            <Examples>
-            Approach this new question with similar sophistication."""
+            [END EXAMPLES]
+            Approach the given problem with similar sophistication."""
 
         return {constants.AGENT_STATE__KEY_EXAMPLES: examples_str}
 
@@ -232,8 +232,9 @@ class AgentOrchestrator:
         Returns:
             dict: The extracted dictionary.
         """
-        # FIXME: Why are there more than one tool calls to the same tool?
+        # FIXME: Why are there more than one tool calls, one to a function (which one?) and another for the Pydantic model?
         result: dict = None
+        ic(ai_message)
         if ai_message.tool_calls:
             if match_tool_call_name is None or (
                 match_tool_call_name is not None

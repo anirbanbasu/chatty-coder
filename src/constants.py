@@ -133,10 +133,7 @@ Finally, output a well-documented and working Python 3 `code` for your solution.
 Make your Python code executable from the command line. Your code must accept all its inputs from `sys.stdin` and print the final output to `sys.stdout`.
 Please format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys.
 
-You may be provided below with examples of similar problems and solutions (may not be in Python).
-[BEGIN EXAMPLES]
 {examples}
-[END EXAMPLES]
 
 The problem is given below.
 """
