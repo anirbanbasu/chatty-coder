@@ -14,9 +14,9 @@
 """The main web application module for the Gradio app."""
 
 from dotenv import load_dotenv
-import uuid
 
-from agents import CoderOutput, AgentOrchestrator, TestCase
+from engine import ChattyCoderEngine
+from workflows.common import TestCase
 from utils import parse_env
 
 try:
@@ -24,36 +24,28 @@ try:
 except ImportError:  # Graceful fallback if IceCream isn't installed.
     ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_ollama import ChatOllama
-from langchain_anthropic import ChatAnthropic
-from langchain_groq import ChatGroq
-from langchain_cohere import ChatCohere
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
-from langgraph.graph.message import AnyMessage
-from langchain_core.runnables.graph import CurveStyle, NodeStyles
-import PIL.Image
-from io import BytesIO
-
-
-# from langchain_groq.chat_models import ChatGroq
-# from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    MessagesPlaceholder,
-)
+from llama_index.llms.ollama import Ollama
+from llama_index.llms.groq import Groq
+from llama_index.llms.anthropic import Anthropic
+from llama_index.llms.cohere import Cohere
+from llama_index.llms.openai import OpenAI
 
 import gradio as gr
 import constants
+from constants import (
+    EMPTY_STRING,
+    FAKE_STRING,
+    PYDANTIC_MODEL__CODE_OUTPUT__CODE,
+    PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE,
+    PYDANTIC_MODEL__CODE_OUTPUT__REASONING,
+    EnvironmentVariables,
+)
 
 
 class GradioApp:
     """The main Gradio app class."""
 
     _gr_state_user_input_text = gr.State(constants.EMPTY_STRING)
-    _llm: BaseChatModel = None
 
     def __init__(self):
         """Default constructor for the Gradio app."""
@@ -71,160 +63,143 @@ class GradioApp:
         )
         ic(self._gradio_host, self._gradio_port)
         # Setup LLM provider and LLM configuration
-        self._llm_provider = parse_env(
-            constants.ENV_VAR_NAME__LLM_PROVIDER,
-            default_value=constants.ENV_VAR_VALUE__LLM_PROVIDER,
-        )
-        if self._llm_provider == "Ollama":
-            # ChatOllama does not support structured outputs: https://python.langchain.com/v0.2/docs/integrations/chat/ollama/
-            # Yet, the API docs seems to suggest that it does: https://api.python.langchain.com/en/latest/chat_models/langchain_community.chat_models.ollama.ChatOllama.html#langchain_community.chat_models.ollama.ChatOllama.with_structured_output
-            self._llm = ChatOllama(
+        self.set_llm_provider()
+
+        self.workflow_engine = ChattyCoderEngine(llm=self._llm)
+        self.agent_task_pending = False
+
+    def set_llm_provider(self, provider: str | None = None):
+        """Set the LLM provider for the application."""
+        if provider is not None:
+            self._llm_provider = provider
+        else:
+            # Setup LLM provider and LLM configuration
+            self._llm_provider = parse_env(
+                EnvironmentVariables.KEY__LLM_PROVIDER,
+                default_value=EnvironmentVariables.VALUE__LLM_PROVIDER_OLLAMA,
+            )
+
+        if self._llm_provider == EnvironmentVariables.VALUE__LLM_PROVIDER_OLLAMA:
+            self._llm = Ollama(
                 base_url=parse_env(
-                    constants.ENV_VAR_NAME__LLM_OLLAMA_URL,
-                    default_value=constants.ENV_VAR_VALUE__LLM_OLLAMA_URL,
+                    EnvironmentVariables.KEY__LLM_OLLAMA_URL,
+                    default_value=EnvironmentVariables.VALUE__LLM_OLLAMA_URL,
                 ),
+                # Increase the timeout to 180 seconds to allow for longer queries on slower computers.
+                request_timeout=180.0,
                 model=parse_env(
-                    constants.ENV_VAR_NAME__LLM_OLLAMA_MODEL,
-                    default_value=constants.ENV_VAR_VALUE__LLM_OLLAMA_MODEL,
+                    EnvironmentVariables.KEY__LLM_OLLAMA_MODEL,
+                    default_value=EnvironmentVariables.VALUE__LLM_OLLAMA_MODEL,
                 ),
                 temperature=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TEMPERATURE,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
+                    EnvironmentVariables.KEY__LLM_TEMPERATURE,
+                    default_value=EnvironmentVariables.VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
-                top_p=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TOP_P,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TOP_P,
-                    type_cast=float,
-                ),
-                top_k=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TOP_K,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TOP_K,
-                    type_cast=int,
-                ),
-                repeat_penalty=parse_env(
-                    constants.ENV_VAR_NAME__LLM_REPEAT_PENALTY,
-                    default_value=constants.ENV_VAR_VALUE__LLM_REPEAT_PENALTY,
-                    type_cast=float,
-                ),
-                seed=parse_env(
-                    constants.ENV_VAR_NAME__LLM_SEED,
-                    default_value=constants.ENV_VAR_VALUE__LLM_SEED,
-                    type_cast=int,
-                ),
-                format="json",
+                # JSON mode is not required because the LLM will be only sometimes instructed to output JSON.
+                # json_mode=True,
+                additional_kwargs={
+                    "top_p": parse_env(
+                        EnvironmentVariables.KEY__LLM_TOP_P,
+                        default_value=EnvironmentVariables.VALUE__LLM_TOP_P,
+                        type_cast=float,
+                    ),
+                    "top_k": parse_env(
+                        EnvironmentVariables.KEY__LLM_TOP_K,
+                        default_value=EnvironmentVariables.VALUE__LLM_TOP_K,
+                        type_cast=int,
+                    ),
+                    "repeat_penalty": parse_env(
+                        EnvironmentVariables.KEY__LLM_REPEAT_PENALTY,
+                        default_value=EnvironmentVariables.VALUE__LLM_REPEAT_PENALTY,
+                        type_cast=float,
+                    ),
+                    "seed": parse_env(
+                        EnvironmentVariables.KEY__LLM_SEED,
+                        default_value=EnvironmentVariables.VALUE__LLM_SEED,
+                        type_cast=int,
+                    ),
+                },
             )
-        elif self._llm_provider == "Groq":
-            self._llm = ChatGroq(
-                api_key=parse_env(constants.ENV_VAR_NAME__LLM_GROQ_API_KEY),
+        elif self._llm_provider == EnvironmentVariables.VALUE__LLM_PROVIDER_GROQ:
+            self._llm = Groq(
+                api_key=parse_env(
+                    EnvironmentVariables.KEY__GROQ_API_KEY,
+                    default_value=FAKE_STRING,
+                ),
                 model=parse_env(
-                    constants.ENV_VAR_NAME__LLM_GROQ_MODEL,
-                    default_value=constants.ENV_VAR_VALUE__LLM_GROQ_MODEL,
+                    EnvironmentVariables.KEY__LLM_GROQ_MODEL,
+                    default_value=EnvironmentVariables.VALUE__LLM_GROQ_MODEL,
                 ),
                 temperature=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TEMPERATURE,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
-                    type_cast=float,
-                ),
-                # model_kwargs={
-                #     "top_p": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_TOP_P,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_TOP_P,
-                #         type_cast=float,
-                #     ),
-                #     "top_k": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_TOP_K,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_TOP_K,
-                #         type_cast=int,
-                #     ),
-                #     "repeat_penalty": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_REPEAT_PENALTY,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_REPEAT_PENALTY,
-                #         type_cast=float,
-                #     ),
-                #     "seed": parse_env(
-                #         constants.ENV_VAR_NAME__LLM_SEED,
-                #         default_value=constants.ENV_VAR_VALUE__LLM_SEED,
-                #         type_cast=int,
-                #     ),
-                # },
-                # Streaming is not compatible with JSON
-                # streaming=False,
-                # JSON response is not compatible with tool calling
-                # response_format={"type": "json_object"},
-            )
-        elif self._llm_provider == "Anthropic":
-            self._llm = ChatAnthropic(
-                api_key=parse_env(constants.ENV_VAR_NAME__LLM_ANTHROPIC_API_KEY),
-                model=parse_env(
-                    constants.ENV_VAR_NAME__LLM_ANTHROPIC_MODEL,
-                    default_value=constants.ENV_VAR_VALUE__LLM_ANTHROPIC_MODEL,
-                ),
-                temperature=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TEMPERATURE,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
+                    EnvironmentVariables.KEY__LLM_TEMPERATURE,
+                    default_value=EnvironmentVariables.VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
             )
-        elif self._llm_provider == "Cohere":
-            self._llm = ChatCohere(
-                cohere_api_key=parse_env(constants.ENV_VAR_NAME__LLM_COHERE_API_KEY),
+        elif self._llm_provider == EnvironmentVariables.VALUE__LLM_PROVIDER_ANTHROPIC:
+            self._llm = Anthropic(
+                api_key=parse_env(
+                    EnvironmentVariables.KEY__ANTHROPIC_API_KEY,
+                    default_value=FAKE_STRING,
+                ),
                 model=parse_env(
-                    constants.ENV_VAR_NAME__LLM_COHERE_MODEL,
-                    default_value=constants.ENV_VAR_VALUE__LLM_COHERE_MODEL,
+                    EnvironmentVariables.KEY__LLM_ANTHROPIC_MODEL,
+                    default_value=EnvironmentVariables.VALUE__LLM_ANTHROPIC_MODEL,
                 ),
                 temperature=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TEMPERATURE,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
+                    EnvironmentVariables.KEY__LLM_TEMPERATURE,
+                    default_value=EnvironmentVariables.VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
             )
-        elif self._llm_provider == "Open AI":
-            self._llm = ChatOpenAI(
-                api_key=parse_env(constants.ENV_VAR_NAME__LLM_OPENAI_API_KEY),
+        elif self._llm_provider == EnvironmentVariables.VALUE__LLM_PROVIDER_COHERE:
+            self._llm = Cohere(
+                api_key=parse_env(
+                    EnvironmentVariables.KEY__COHERE_API_KEY,
+                    default_value=FAKE_STRING,
+                ),
                 model=parse_env(
-                    constants.ENV_VAR_NAME__LLM_OPENAI_MODEL,
-                    default_value=constants.ENV_VAR_VALUE__LLM_OPENAI_MODEL,
+                    EnvironmentVariables.KEY__LLM_COHERE_MODEL,
+                    default_value=EnvironmentVariables.VALUE__LLM_COHERE_MODEL,
                 ),
                 temperature=parse_env(
-                    constants.ENV_VAR_NAME__LLM_TEMPERATURE,
-                    default_value=constants.ENV_VAR_VALUE__LLM_TEMPERATURE,
+                    EnvironmentVariables.KEY__LLM_TEMPERATURE,
+                    default_value=EnvironmentVariables.VALUE__LLM_TEMPERATURE,
+                    type_cast=float,
+                ),
+            )
+        elif self._llm_provider == EnvironmentVariables.VALUE__LLM_PROVIDER_OPENAI:
+            self._llm = OpenAI(
+                api_key=parse_env(
+                    EnvironmentVariables.KEY__OPENAI_API_KEY,
+                    default_value=FAKE_STRING,
+                ),
+                model=parse_env(
+                    EnvironmentVariables.KEY__LLM_OPENAI_MODEL,
+                    default_value=EnvironmentVariables.VALUE__LLM_OPENAI_MODEL,
+                ),
+                temperature=parse_env(
+                    EnvironmentVariables.KEY__LLM_TEMPERATURE,
+                    default_value=EnvironmentVariables.VALUE__LLM_TEMPERATURE,
                     type_cast=float,
                 ),
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {self._llm_provider}")
 
-        # Setup the agent orchestrator
-        solver_prompt = ChatPromptTemplate(
-            input_variables=[constants.PROMPT_TEMPLATE__VAR_MESSAGES],
-            input_types={constants.PROMPT_TEMPLATE__VAR_MESSAGES: AnyMessage},
-            partial_variables={
-                constants.PROMPT_TEMPLATE__PARTIAL_VAR__EXAMPLES: constants.EMPTY_STRING
-            },
-            messages=[
-                SystemMessagePromptTemplate.from_template(
-                    template=parse_env(
-                        constants.ENV_VAR_NAME__LLM_CODER_SYSTEM_PROMPT,
-                        constants.ENV_VAR_VALUE__LLM_CODER_SYSTEM_PROMPT,
-                    )
-                ),
-                MessagesPlaceholder(
-                    variable_name=constants.PROMPT_TEMPLATE__VAR_MESSAGES
-                ),
-            ],
+        ic(
+            self._llm_provider,
+            self._llm.model,
+            self._llm.temperature,
         )
 
-        self._agent_orchestrator = AgentOrchestrator(
-            llm=self._llm, solver_prompt=solver_prompt
-        )
-        self._agent_orchestrator.build_agent_graph()
-
-    def find_solution(
+    async def find_solution(
         self,
         user_question: str,
         runtime_limit: int,
         test_cases: list[TestCase] = None,
+        agent_status=gr.Progress(),
     ):
         """
         Generator function to find a coding solution to the user question.
@@ -239,36 +214,42 @@ class GradioApp:
             str: The pseudocode for the solution.
             str: The Python code for the solution.
         """
-        config = {"configurable": {"thread_id": uuid.uuid4().hex, "k": 3}}
-        graph_input = {
-            constants.AGENT_STATE__KEY_MESSAGES: HumanMessage(
-                content=f"""[BEGIN PROBLEM]
-{user_question}
-[END PROBLEM]"""
-            ),
-            constants.AGENT_STATE__KEY_RUNTIME_LIMIT: runtime_limit,
-            constants.AGENT_STATE__KEY_TEST_CASES: test_cases,
-        }
-        result_iterator = self._agent_orchestrator.agent_graph.stream(
-            input=graph_input,
-            config=config,
-        )
-        for result in result_iterator:
-            if constants.AGENT_STATE_GRAPH_NODE__SOLVE in result:
-                response: AIMessage = result[constants.AGENT_STATE_GRAPH_NODE__SOLVE][
-                    constants.AGENT_STATE__KEY_MESSAGES
-                ][-1]
-                solution: dict = (
-                    self._agent_orchestrator.extract_dictionary_from_ai_message(
-                        ai_message=response, match_tool_call_name=CoderOutput.__name__
+
+        if self.agent_task_pending:
+            gr.Warning(
+                "chatty coder is busy, please wait for the current task to complete."
+            )
+            return
+        if (
+            user_question is not None
+            and user_question != EMPTY_STRING
+            and self.agent_task_pending is False
+        ):
+            # Stream events and results
+            self.agent_task_pending = True
+            generator = self.workflow_engine.run(user_question)
+            async for (
+                done,
+                finished_steps,
+                total_steps,
+                result,
+            ) in generator:
+                if done:
+                    agent_status(progress=None)
+                    self.agent_task_pending = False
+                    yield (
+                        result[PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
+                        result[PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
+                        result[PYDANTIC_MODEL__CODE_OUTPUT__CODE],
                     )
-                )
-                ic(solution)
-                yield [
-                    solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
-                    solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
-                    solution[constants.PYDANTIC_MODEL__CODE_OUTPUT__CODE],
-                ]
+                else:
+                    status = (
+                        str(result)[:125] + "..."
+                        if len(str(result)) > 125
+                        else str(result)
+                    )
+                    agent_status(progress=(finished_steps, total_steps), desc=status)
+                    yield EMPTY_STRING, EMPTY_STRING, EMPTY_STRING
 
     def add_test_case(
         self, test_cases: list[TestCase] | None, test_case_in: str, test_case_out: str
@@ -355,27 +336,27 @@ class GradioApp:
                                 label=f"{self._llm_provider} LLM configuration",
                                 show_label=True,
                             )
-                            gr.Image(
-                                value=PIL.Image.open(
-                                    BytesIO(
-                                        self._agent_orchestrator.agent_graph.get_graph().draw_mermaid_png(
-                                            curve_style=CurveStyle.BASIS,
-                                            # The node styles are SVG attributes, see: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute
-                                            node_colors=NodeStyles(
-                                                first="fill:#9ccc2b, fill-opacity:0.35, font-family:'monospace'",
-                                                last="fill:#cc2b2b, fill-opacity:0.25, font-family:'monospace'",
-                                                default="fill:#2ba9cc, fill-opacity:0.35, font-family:'monospace'",
-                                            ),
-                                        )
-                                    )
-                                ),
-                                label="Agent orchestrator graph",
-                                show_label=True,
-                                show_download_button=False,
-                                show_fullscreen_button=False,
-                                show_share_button=False,
-                                format="png",
-                            )
+                            # gr.Image(
+                            #     value=PIL.Image.open(
+                            #         BytesIO(
+                            #             self._agent_orchestrator.agent_graph.get_graph().draw_mermaid_png(
+                            #                 curve_style=CurveStyle.BASIS,
+                            #                 # The node styles are SVG attributes, see: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute
+                            #                 node_colors=NodeStyles(
+                            #                     first="fill:#9ccc2b, fill-opacity:0.35, font-family:'monospace'",
+                            #                     last="fill:#cc2b2b, fill-opacity:0.25, font-family:'monospace'",
+                            #                     default="fill:#2ba9cc, fill-opacity:0.35, font-family:'monospace'",
+                            #                 ),
+                            #             )
+                            #         )
+                            #     ),
+                            #     label="Agent orchestrator graph",
+                            #     show_label=True,
+                            #     show_download_button=False,
+                            #     show_fullscreen_button=False,
+                            #     show_share_button=False,
+                            #     format="png",
+                            # )
                     chk_show_user_input_preview = gr.Checkbox(
                         value=False,
                         label="Preview question (Markdown formatted)",
@@ -511,7 +492,6 @@ class GradioApp:
         allowed_static_file_paths = [
             constants.PROJECT_LOGO_PATH,
         ]
-        ic(allowed_static_file_paths)
         self.interface.queue().launch(
             server_name=self._gradio_host,
             server_port=self._gradio_port,

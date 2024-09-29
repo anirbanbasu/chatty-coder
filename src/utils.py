@@ -57,3 +57,43 @@ def parse_env(
         else [type_cast(v) for v in parsed_value.split(list_split_char)]
     )
     return value
+
+
+def get_terminal_size(fallback=(100, 25)) -> tuple[int, int]:
+    """
+    Get the terminal size.
+    See: https://granitosaur.us/getting-terminal-size.html
+
+    Args:
+        fallback (tuple[int, int]): The fallback size to use if the terminal size cannot be determined.
+
+    Returns:
+        tuple[int, int]: The terminal size as a tuple of (columns, rows).
+    """
+    for i in range(0, 3):
+        try:
+            columns, rows = os.get_terminal_size(i)
+        except OSError:
+            continue
+        break
+    else:  # set default if the loop completes which means all failed
+        columns, rows = fallback
+    return columns, rows
+
+
+def check_list_subset(list_a: list[Any], list_b: list[Any]) -> list[Any]:
+    """
+    Check if the elements of list_a forms a set that is a subset of the set formed by the elements of list_a.
+    This includes the cases where list_a is an empty list, and list_a contains all the elements of list_b.
+
+    Args:
+        list_a (list[Any]): The first list.
+        list_b (list[Any]): The second list.
+
+    Returns:
+        list[Any]: The distinct elements of list_a that are not in list_b. This should be an empty list if list_a
+        is a subset of list_b.
+    """
+    s1 = set(list_a)
+    s2 = set(list_b)
+    return list(s1 - s2)

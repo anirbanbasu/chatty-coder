@@ -65,6 +65,7 @@ COPY ./LICENSE ./.env.docker ./
 # Although the example .env file is copied here, use -v to load a different .env file from the Docker host, if necessary.
 RUN mv .env.docker .env
 COPY ./src/*.py ./src/
+COPY ./src/workflows/*.py ./src/workflows/
 # Copy the required assets
 COPY ./assets/logo-embed.svg ./assets/
 

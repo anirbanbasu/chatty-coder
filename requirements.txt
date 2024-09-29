@@ -6,20 +6,18 @@ python-dotenv
 icecream
 pytest
 
-# LangChain, LangGraph and related stuff
-langgraph
-grandalf
-langgraph-checkpoint-sqlite
-langchain_community
-langchain-experimental
-langchain
-langchainhub
-langchain_anthropic
-langchain_groq
-langchain-openai
-langchain-cohere
-langchain-ollama
-rank_bm25
+# LlamaIndex
+llama-index
+llama-index-utils-workflow
+
+# LlamaIndex packs
+llama-index-packs-agents-lats
+
+# LlamaIndex LLMs
+llama-index-llms-groq
+llama-index-llms-ollama
+llama-index-llms-anthropic
+llama-index-llms-cohere
 
 # User interface
 gradio
