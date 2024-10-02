@@ -28,9 +28,24 @@ class TestCase(BaseModel):
         default=EMPTY_STRING,
         description="Space separated list of inputs to the test case.",
     )
-    outputs: str = Field(
+    expected_outputs: str = Field(
         default=EMPTY_STRING,
         description="Expected outputs of the test case.",
+    )
+
+
+class CodeExecutionResult(BaseModel):
+    inputs: str = Field(
+        default=EMPTY_STRING,
+        description="Space separated list of inputs to the code.",
+    )
+    expected_outputs: str = Field(
+        default=EMPTY_STRING,
+        description="Expected outputs of the code.",
+    )
+    actual_outputs: str = Field(
+        default=EMPTY_STRING,
+        description="Actual outputs of the code.",
     )
 
 

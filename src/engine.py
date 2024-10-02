@@ -14,6 +14,7 @@
 
 """Workflow executor engine."""
 
+from typing import List
 import dirtyjson as json
 import sys
 import asyncio
@@ -25,9 +26,18 @@ from llama_index.core.workflow import (
     Workflow,
 )
 
-from constants import PROJECT_NAME
+from llama_index.core.workflow.handler import WorkflowHandler
+
+from constants import (
+    EMPTY_STRING,
+    PROJECT_NAME,
+    PYDANTIC_MODEL__CODE_OUTPUT__CODE,
+    PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE,
+    PYDANTIC_MODEL__CODE_OUTPUT__REASONING,
+)
 from utils import get_terminal_size
-from workflows.self_reflective_coder import SelfReflectiveCoderWorkflow
+from workflows.common import TestCase
+from workflows.self_reflective_coder import CompetitiveCoderWorkflow
 
 try:
     from icecream import ic
@@ -39,7 +49,7 @@ class ChattyCoderEngine:
     def __init__(self, llm: LLM | None = None):
         self.llm = llm
         self.available_workflows = [
-            SelfReflectiveCoderWorkflow,
+            CompetitiveCoderWorkflow,
         ]
 
     def get_workflows_dataframe(self) -> list[list[str, str]]:
@@ -100,18 +110,24 @@ class ChattyCoderEngine:
         raise ValueError(f"Workflow with name '{workflow_name}' is not supported.")
 
     async def run(
-        self, problem: str, workflow: str = SelfReflectiveCoderWorkflow.__name__
+        self,
+        problem: str,
+        test_cases: List[TestCase] = None,
+        runtime_limit: float = 30.0,
+        workflow: str = CompetitiveCoderWorkflow.__name__,
     ):
         # Instantiating the ReAct workflow instead may not be always enough to get the desired responses to certain questions.
         chosen_workflow = self.get_workflow_by_name(workflow)
 
-        workflow_init_kwargs = {"llm": self.llm, "timeout": 180, "verbose": False}
+        workflow_init_kwargs = {"llm": self.llm, "timeout": 180, "verbose": True}
         workflow_run_kwargs = {}
 
         if chosen_workflow in [
-            SelfReflectiveCoderWorkflow,
+            CompetitiveCoderWorkflow,
         ]:
             workflow_run_kwargs["problem"] = problem
+            workflow_run_kwargs["test_cases"] = test_cases
+            workflow_run_kwargs["runtime_limit"] = runtime_limit
         else:
             raise ValueError(f"Workflow '{workflow}' is not supported.")
 
@@ -121,7 +137,9 @@ class ChattyCoderEngine:
             flush=True,
         )
 
-        task: asyncio.Future = self.workflow.run(**workflow_run_kwargs)
+        self.running_workflow_handler: WorkflowHandler = self.workflow.run(
+            **workflow_run_kwargs
+        )
         done: bool = False
         total_steps: int = 0
         finished_steps: int = 0
@@ -141,16 +159,21 @@ class ChattyCoderEngine:
             progress_bar.reset(total=total_steps)
             progress_bar.update(finished_steps)
             progress_bar.refresh()
-            yield done, finished_steps, total_steps, ev.msg
+            yield done, finished_steps, total_steps, ev
         try:
-            done, pending = await asyncio.wait([task])
+            done, pending = await asyncio.wait([self.running_workflow_handler])
             if done:
-                result = json.loads(task.result())
+                result = json.loads(self.running_workflow_handler.result())
         except Exception as e:
-            result = f"\nException in running the workflow(s). Type: {type(e).__name__}. Message: '{str(e)}'"
+            result = {
+                PYDANTIC_MODEL__CODE_OUTPUT__REASONING: f"\nException in running the workflow(s). Type: {type(e).__name__}. Message: '{str(e)}'",
+                PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE: EMPTY_STRING,
+                PYDANTIC_MODEL__CODE_OUTPUT__CODE: EMPTY_STRING,
+            }
             # Set this to done, otherwise another workflow call cannot be made.
             done = True
             print(result, file=sys.stderr, flush=True)
+            raise e
         finally:
             progress_bar.close()
         yield done, finished_steps, total_steps, result

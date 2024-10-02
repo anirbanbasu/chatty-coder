@@ -97,3 +97,18 @@ def check_list_subset(list_a: list[Any], list_b: list[Any]) -> list[Any]:
     s1 = set(list_a)
     s2 = set(list_b)
     return list(s1 - s2)
+
+
+def remove_markdown_codeblock_backticks(text: str) -> str:
+    """
+    Remove all occurrences of the Markdown code block backticks from the text.
+
+    Args:
+        text (str): The text to strip the backticks from.
+
+    Returns:
+        str: The text with the backticks stripped.
+    """
+    return text.replace(
+        constants.MARKDOWN_CODE_BLOCK_THREE_BACKTICKS, constants.EMPTY_STRING
+    )

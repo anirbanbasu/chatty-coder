@@ -19,6 +19,7 @@ import time
 import traceback
 
 import constants
+from utils import remove_markdown_codeblock_backticks
 
 multiprocessing.set_start_method("fork", force=True)
 # WARNING
@@ -38,6 +39,15 @@ except ImportError:  # Graceful fallback if IceCream isn't installed.
 
 class CodeExecutor:
     """A class to execute code in a separate process."""
+
+    CODE_WRAPPER = (
+        "\n\nimport sys"
+        "\ndef main():"
+        "\n\targs = sys.argv[1:]"
+        "\n\tprint(solve(args))"
+        "\n\nif __name__ == '__main__':"
+        "\n\tmain()"
+    )
 
     def __init__(self):
         self._reset_execution_time()
@@ -131,7 +141,14 @@ class CodeExecutor:
         q = multiprocessing.Queue()
         process = multiprocessing.Process(
             target=self._exec_program,
-            args=(q, program, input_data, expected_output, timeout),
+            args=(
+                q,
+                remove_markdown_codeblock_backticks(program)
+                + CodeExecutor.CODE_WRAPPER,
+                input_data,
+                expected_output,
+                timeout,
+            ),
         )
         process.start()
         process.join(timeout=timeout + 1)
@@ -145,5 +162,6 @@ class CodeExecutor:
             except queue.Empty:
                 result = constants.EXECUTOR_MESSAGE__NO_RESULTS
             finally:
-                ic(input_data, expected_output, result)
+                process.close()
+                # ic(input_data, expected_output, result)
         return result

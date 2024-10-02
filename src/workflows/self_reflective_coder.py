@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional
+from typing import Any, List, Optional
 from llama_index.core.workflow import (
     step,
     Context,
@@ -25,9 +25,17 @@ from llama_index.core.prompts import PromptTemplate
 
 from llama_index.core.llms.llm import LLM
 from llama_index.core.tools import BaseTool
+from llama_index.core.base.llms.types import CompletionResponse
 
-from constants import CHAR_ENCODING_UTF8
-from workflows.common import WorkflowStatusEvent
+from code_executor import CodeExecutor
+from constants import (
+    CHAR_ENCODING_UTF8,
+    EMPTY_STRING,
+    EXECUTOR_MESSAGE__FAILED,
+    EXECUTOR_MESSAGE__PASSED,
+)
+from utils import remove_markdown_codeblock_backticks
+from workflows.common import CodeExecutionResult, TestCase, WorkflowStatusEvent
 
 try:
     from icecream import ic
@@ -50,17 +58,76 @@ class DraftSolutionResultEvent(Event):
     code: str
 
 
-class SelfReflectiveCoderWorkflow(Workflow):
+class CodeExecutionResultEvent(Event):
+    """
+    Event to store the code execution result.
+
+    Fields:
+        results (List[CodeExecutionResult]): The result of the code execution.
+    """
+
+    results: List[CodeExecutionResult]
+
+
+class CompetitiveCoderWorkflow(Workflow):
+    """
+    # Competitive coder
+
+    A workflow implementation of the research paper at: https://arxiv.org/abs/2404.10952v1. The Implementation of the code is based on: https://princeton-nlp.github.io/USACOBench/
+
+    **Caveats**
+     - Not known yet.
+    """
+
+    CTX_KEY_PROBLEM = "problem"
+    CTX_KEY_TEST_CASES = "test_cases"
+    CTX_RUNTIME_LIMIT = "runtime_limit"
+    CTX_DRAFT_SOLUTION = "draft_solution"
+
     PROMPT_TEMPLATE_DRAFT_SOLVE = PromptTemplate(
-        "You are a world-class Python programmer."
+        "You are a world-class Python programmer. "
         "You write concise and well-documented code following the PEP8 style guide. Please respond with a Python 3 solution to the given problem below."
-        "\nFirst, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution."
-        "Then, output a complete `pseudocode` in Pascal to implement your concept solution."
+        "\nFirst, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution. "
+        "Then, output a complete `pseudocode` in Pascal to implement your concept solution. "
         "Finally, output a well-documented and working Python 3 `code` for your solution. Do not use external libraries."
-        "Make your Python code executable from the command line. Your code must accept all its inputs from `sys.stdin` and print the final output to `sys.stdout`."
-        "Please format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys."
-        "Please format the values of these JSON keys as Markdown."
+        "\nImplement your Python code as a function named `solve`. The function must accept `args` as a list of string arguments. It must convert each argument to the correct type as necessary. The function must return the result. "
+        # Stop outputting a generator function.
+        "The function must `return` a result, not `yield` intermediate results."
+        # "\nPlease format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys. "
+        "\nPlease format your response as a JSON dictionary exactly as follows:"
+        "\n{{"
+        '\n\t"reasoning": "the reasoning you generate",'
+        '\n\t"pseudocode": "the pseudocode you generate",'
+        '\n\t"code": "the code you generate",'
+        "}}\n"
+        # The following instruction about Markdown formatting is necessary to make the output look good on Gradio.
+        # "Please format the values of these JSON keys as Markdown."
+        # "Please ensure that the line breaks in the values of these JSON keys are correct for renderring as Markdown. However, do not format the `pseudocode` or `code` as Markdown."
         "\n\n[BEGIN PROBLEM]\n{problem}\n[END PROBLEM]"
+    )
+
+    PROMPT_TEMPLATE_SOLVE_FIX_TEST_RESULTS = PromptTemplate(
+        "You are a world-class Python programmer. You write concise and well-documented code following the PEP8 style guide. "
+        "As a response to the given problem below, you have generated a Python 3 code solution as shown below."
+        "\nHowever, your solution failed to pass the test cases given below. "
+        "Please review the test results and generate an improved solution. "
+        "\nFor your improved solution, first, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution. "
+        "Then, output a complete `pseudocode` in Pascal to implement your concept solution. "
+        "Finally, output a well-documented and working Python 3 `code` for your solution. Do not use external libraries."
+        "\nImplement your Python code as a function named `solve`. The function must accept `args` as a list of string arguments. It must convert each argument to the correct type as necessary. The function must return the result. "
+        # Stop outputting a generator function.
+        "The function must `return` a result, not `yield` intermediate results."
+        "\nPlease format your response as a JSON dictionary exactly as follows:"
+        "\n{{"
+        '\n\t"reasoning": "the reasoning you generate",'
+        '\n\t"pseudocode": "the pseudocode you generate",'
+        '\n\t"code": "the code you generate",'
+        "}}\n"
+        # The following instruction about Markdown formatting is necessary to make the output look good on Gradio.
+        # "Please format the values of these JSON keys as Markdown."
+        "\n\n[BEGIN PROBLEM]\n{problem}\n[END PROBLEM]"
+        "\n\n[BEGIN DRAFT SOLUTION]\n{draft_solution}\n[END DRAFT SOLUTION]"
+        "\n\n[BEGIN TEST RESULTS]\n{test_results}\n[END TEST RESULTS]"
     )
 
     def __init__(
@@ -77,43 +144,55 @@ class SelfReflectiveCoderWorkflow(Workflow):
         )
         self.llm = llm
         self.tools = tools
-        self.draft_solve_prompt = (
-            draft_solve_prompt
-            or SelfReflectiveCoderWorkflow.PROMPT_TEMPLATE_DRAFT_SOLVE
-        )
+        self._code_executor = CodeExecutor()
         self._total_steps = 0
         self._finished_steps = 0
 
     @step
-    async def draft_solve(self, ctx: Context, ev: StartEvent) -> StopEvent:
+    async def draft_solve(
+        self, ctx: Context, ev: StartEvent
+    ) -> DraftSolutionResultEvent:
         # Draft the solution
+        if not hasattr(ev, CompetitiveCoderWorkflow.CTX_KEY_PROBLEM):
+            raise ValueError("The problem statement is missing. Try again!")
+
+        await ctx.set(CompetitiveCoderWorkflow.CTX_KEY_PROBLEM, ev.problem)
+
+        if hasattr(ev, CompetitiveCoderWorkflow.CTX_KEY_TEST_CASES):
+            await ctx.set(CompetitiveCoderWorkflow.CTX_KEY_TEST_CASES, ev.test_cases)
+        else:
+            await ctx.set(CompetitiveCoderWorkflow.CTX_KEY_TEST_CASES, [])
+
+        await ctx.set(CompetitiveCoderWorkflow.CTX_RUNTIME_LIMIT, ev.runtime_limit)
+
         self._total_steps += 1
         ctx.write_event_to_stream(
             WorkflowStatusEvent(
-                msg="Drafting the solution...",
+                msg=f"Drafting the solution to the problem:\n{ev.problem}",
                 total_steps=self._total_steps,
                 finished_steps=self._finished_steps,
             )
         )
-        response: DraftSolutionResultEvent = await self.llm.astructured_predict(
-            output_cls=DraftSolutionResultEvent,
-            prompt=self.draft_solve_prompt,
-            problem=ev.problem,
+        # TODO: Prefer acomplete to astructured_predict?
+        raw_response: CompletionResponse = await self.llm.acomplete(
+            prompt=CompetitiveCoderWorkflow.PROMPT_TEMPLATE_DRAFT_SOLVE.format(
+                problem=ev.problem
+            ),
         )
+        response: DraftSolutionResultEvent = (
+            DraftSolutionResultEvent.model_validate_json(raw_response.text)
+        )
+        response.pseudocode = remove_markdown_codeblock_backticks(response.pseudocode)
+        response.code = remove_markdown_codeblock_backticks(response.code)
         self._finished_steps += 1
         ctx.write_event_to_stream(
             WorkflowStatusEvent(
-                msg="Obtained a solution...",
+                msg=f"Obtained a draft solution along the following reasoning:\n{response.reasoning}",
                 total_steps=self._total_steps,
                 finished_steps=self._finished_steps,
             )
         )
-        # ic(response)
-        return StopEvent(
-            result=response.model_dump_json(serialize_as_any=True).encode(
-                encoding=CHAR_ENCODING_UTF8
-            )
-        )
+        return response
 
     @step
     async def retrieve(self, ctx: Context, ev: Event) -> Event:
@@ -121,11 +200,126 @@ class SelfReflectiveCoderWorkflow(Workflow):
         pass
 
     @step
-    async def solve(self, ctx: Context, ev: Event) -> Event | StopEvent:
-        # Draft the solution
-        pass
+    async def solve(
+        self, ctx: Context, ev: CodeExecutionResultEvent
+    ) -> Event | StopEvent:
+        # Review and improve the solution
+        draft_solution: DraftSolutionResultEvent = await ctx.get(
+            CompetitiveCoderWorkflow.CTX_DRAFT_SOLUTION
+        )
+        problem = await ctx.get(CompetitiveCoderWorkflow.CTX_KEY_PROBLEM)
+        test_results = EMPTY_STRING
+        for i, result in enumerate(ev.results):
+            if result.expected_outputs != result.actual_outputs:
+                # Do not test cases that passed.
+                test_results += f"[BEGIN TEST CASE {i + 1}]\nInputs:\n{result.inputs}\nExpected outputs:\n{result.expected_outputs}\nActual outputs:\n{result.actual_outputs}\n[END TEST CASE {i + 1}]\n"
+
+        if len(test_results) > 0:
+            self._total_steps += 1
+            ctx.write_event_to_stream(
+                WorkflowStatusEvent(
+                    msg=f"Attempting to improve the solution to the problem:\n{problem}",
+                    total_steps=self._total_steps,
+                    finished_steps=self._finished_steps,
+                )
+            )
+            raw_response: CompletionResponse = await self.llm.acomplete(
+                prompt=CompetitiveCoderWorkflow.PROMPT_TEMPLATE_SOLVE_FIX_TEST_RESULTS.format(
+                    problem=problem,
+                    draft_solution=draft_solution.code,
+                    test_results=test_results,
+                ),
+            )
+            response: DraftSolutionResultEvent = (
+                DraftSolutionResultEvent.model_validate_json(raw_response.text)
+            )
+            response.pseudocode = remove_markdown_codeblock_backticks(
+                response.pseudocode
+            )
+            response.code = remove_markdown_codeblock_backticks(response.code)
+            self._finished_steps += 1
+            ctx.write_event_to_stream(
+                WorkflowStatusEvent(
+                    msg=f"Obtained an improved solution with the following code:\n{response.code}",
+                    total_steps=self._total_steps,
+                    finished_steps=self._finished_steps,
+                )
+            )
+        else:
+            response = draft_solution
+        return StopEvent(
+            result=response.model_dump_json(serialize_as_any=True).encode(
+                encoding=CHAR_ENCODING_UTF8
+            )
+        )
 
     @step
-    async def evaluate(self, ctx: Context, ev: Event) -> Event:
-        # Draft the solution
-        pass
+    async def evaluate_with_test_cases(
+        self, ctx: Context, ev: DraftSolutionResultEvent
+    ) -> CodeExecutionResultEvent | StopEvent:
+        result: List[CodeExecutionResult] = []
+        # Evaluate a solution
+        test_cases: List[TestCase] = await ctx.get(
+            CompetitiveCoderWorkflow.CTX_KEY_TEST_CASES
+        )
+        at_least_one_test_failed: bool = False
+        runtime_limit: int = await ctx.get(CompetitiveCoderWorkflow.CTX_RUNTIME_LIMIT)
+        if not test_cases or len(test_cases) == 0:
+            ctx.write_event_to_stream(
+                WorkflowStatusEvent(
+                    msg="No test cases provided. Skipping evaluation.",
+                    total_steps=self._total_steps,
+                    finished_steps=self._finished_steps,
+                )
+            )
+        else:
+            self._total_steps += 1
+            ctx.write_event_to_stream(
+                WorkflowStatusEvent(
+                    msg=f"Evaluating the solution with the provided {len(test_cases)} test case{'s' if len(test_cases)>1 else EMPTY_STRING}.",
+                    total_steps=self._total_steps,
+                    finished_steps=self._finished_steps,
+                )
+            )
+            for i, test_case_dict in enumerate(test_cases):
+                test_case = TestCase.model_validate(test_case_dict)
+                actual_outputs = self._code_executor.check_correctness(
+                    program=ev.code,
+                    input_data=test_case.inputs,
+                    expected_output=test_case.expected_outputs,
+                    timeout=runtime_limit,
+                )
+                result.append(
+                    CodeExecutionResult(
+                        inputs=test_case.inputs,
+                        expected_outputs=test_case.expected_outputs,
+                        actual_outputs=actual_outputs,
+                    )
+                )
+                test_passed: bool = test_case.expected_outputs == actual_outputs
+                at_least_one_test_failed = at_least_one_test_failed or not test_passed
+                ctx.write_event_to_stream(
+                    WorkflowStatusEvent(
+                        msg=f"Evaluated test case {i + 1}:\n\t{test_case}\nResult:\n\t{EXECUTOR_MESSAGE__PASSED if test_passed else EXECUTOR_MESSAGE__FAILED}",
+                        total_steps=self._total_steps,
+                        finished_steps=self._finished_steps,
+                    )
+                )
+            self._finished_steps += 1
+            ctx.write_event_to_stream(
+                WorkflowStatusEvent(
+                    msg=f"Finished running {len(test_cases)} test case{'s' if len(test_cases)>1 else EMPTY_STRING}.",
+                    total_steps=self._total_steps,
+                    finished_steps=self._finished_steps,
+                )
+            )
+        if len(result) > 0 and at_least_one_test_failed:
+            # Update the draft solution
+            await ctx.set(CompetitiveCoderWorkflow.CTX_DRAFT_SOLUTION, ev)
+            return CodeExecutionResultEvent(results=result)
+
+        return StopEvent(
+            result=ev.model_dump_json(serialize_as_any=True).encode(
+                encoding=CHAR_ENCODING_UTF8
+            )
+        )

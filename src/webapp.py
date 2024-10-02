@@ -13,10 +13,11 @@
 # limitations under the License.
 """The main web application module for the Gradio app."""
 
+from typing import List
 from dotenv import load_dotenv
 
 from engine import ChattyCoderEngine
-from workflows.common import TestCase
+from workflows.common import TestCase, WorkflowStatusEvent
 from utils import parse_env
 
 try:
@@ -24,6 +25,7 @@ try:
 except ImportError:  # Graceful fallback if IceCream isn't installed.
     ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
+from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.llms.ollama import Ollama
 from llama_index.llms.groq import Groq
 from llama_index.llms.anthropic import Anthropic
@@ -33,11 +35,14 @@ from llama_index.llms.openai import OpenAI
 import gradio as gr
 import constants
 from constants import (
+    ELLIPSIS,
     EMPTY_STRING,
     FAKE_STRING,
     PYDANTIC_MODEL__CODE_OUTPUT__CODE,
     PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE,
     PYDANTIC_MODEL__CODE_OUTPUT__REASONING,
+    TEST_CASE__KEY_EXPECTED_OUTPUTS,
+    TEST_CASE__KEY_INPUTS,
     EnvironmentVariables,
 )
 
@@ -197,8 +202,9 @@ class GradioApp:
     async def find_solution(
         self,
         user_question: str,
-        runtime_limit: int,
-        test_cases: list[TestCase] = None,
+        runtime_limit: float,
+        test_cases: List[TestCase] = None,
+        chat_history: List[ChatMessage] = [],
         agent_status=gr.Progress(),
     ):
         """
@@ -207,17 +213,18 @@ class GradioApp:
         Args:
             user_question (str): The question asked by the user.
             runtime_limit (int): The runtime limit for the code execution.
-            test_cases (list[TestCase], optional): The list of test cases to evaluate the code against. Defaults to None.
+            test_cases (List[TestCase], optional): The list of test cases to evaluate the code against. Defaults to None.
 
         Yields:
             str: The reasoning behind the solution.
             str: The pseudocode for the solution.
             str: The Python code for the solution.
+            List[ChatMessage]: The chat history.
         """
 
         if self.agent_task_pending:
             gr.Warning(
-                "chatty coder is busy, please wait for the current task to complete."
+                "ch@tty cod:r is busy, please wait for the current task to complete!"
             )
             return
         if (
@@ -227,7 +234,11 @@ class GradioApp:
         ):
             # Stream events and results
             self.agent_task_pending = True
-            generator = self.workflow_engine.run(user_question)
+            generator = self.workflow_engine.run(
+                problem=user_question,
+                test_cases=test_cases,
+                runtime_limit=runtime_limit,
+            )
             async for (
                 done,
                 finished_steps,
@@ -237,19 +248,31 @@ class GradioApp:
                 if done:
                     agent_status(progress=None)
                     self.agent_task_pending = False
+                    # ic(result)
+                    # chat_history.clear()
                     yield (
                         result[PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
                         result[PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
                         result[PYDANTIC_MODEL__CODE_OUTPUT__CODE],
+                        chat_history,
                     )
                 else:
-                    status = (
-                        str(result)[:125] + "..."
-                        if len(str(result)) > 125
-                        else str(result)
-                    )
-                    agent_status(progress=(finished_steps, total_steps), desc=status)
-                    yield EMPTY_STRING, EMPTY_STRING, EMPTY_STRING
+                    if isinstance(result, WorkflowStatusEvent):
+                        status_msg = result.msg
+                        status = (
+                            str(status_msg)[:125] + ELLIPSIS
+                            if len(str(status_msg)) > 125
+                            else str(status_msg)
+                        )
+                        agent_status(
+                            progress=(finished_steps, total_steps), desc=status
+                        )
+                        chat_history.append(
+                            ChatMessage(
+                                role=MessageRole.ASSISTANT, content=status_msg
+                            ).dict()
+                        )
+                        yield (EMPTY_STRING, EMPTY_STRING, EMPTY_STRING, chat_history)
 
     def add_test_case(
         self, test_cases: list[TestCase] | None, test_case_in: str, test_case_out: str
@@ -269,8 +292,8 @@ class GradioApp:
             test_cases = []
         test_cases.append(
             {
-                constants.TEST_CASE__KEY_INPUTS: test_case_in,
-                constants.TEST_CASE__KEY_OUTPUTS: test_case_out,
+                TEST_CASE__KEY_INPUTS: test_case_in.strip(),
+                TEST_CASE__KEY_EXPECTED_OUTPUTS: test_case_out.strip(),
             }
         )
         return test_cases
@@ -326,53 +349,67 @@ class GradioApp:
                     btn_theme_toggle = gr.Button("Toggle dark mode")
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
-                    with gr.Accordion(
-                        label=f"{self._llm_provider} LLM and agent orchestrator configuration",
-                        open=False,
-                    ):
-                        with gr.Group():
-                            gr.JSON(
-                                value=self._llm.to_json(),
-                                label=f"{self._llm_provider} LLM configuration",
-                                show_label=True,
-                            )
-                            # gr.Image(
-                            #     value=PIL.Image.open(
-                            #         BytesIO(
-                            #             self._agent_orchestrator.agent_graph.get_graph().draw_mermaid_png(
-                            #                 curve_style=CurveStyle.BASIS,
-                            #                 # The node styles are SVG attributes, see: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute
-                            #                 node_colors=NodeStyles(
-                            #                     first="fill:#9ccc2b, fill-opacity:0.35, font-family:'monospace'",
-                            #                     last="fill:#cc2b2b, fill-opacity:0.25, font-family:'monospace'",
-                            #                     default="fill:#2ba9cc, fill-opacity:0.35, font-family:'monospace'",
-                            #                 ),
-                            #             )
-                            #         )
-                            #     ),
-                            #     label="Agent orchestrator graph",
-                            #     show_label=True,
-                            #     show_download_button=False,
-                            #     show_fullscreen_button=False,
-                            #     show_share_button=False,
-                            #     format="png",
-                            # )
-                    chk_show_user_input_preview = gr.Checkbox(
-                        value=False,
-                        label="Preview question (Markdown formatted)",
-                    )
-                    input_user_question = gr.TextArea(
-                        label="Question (in Markdown format)",
-                        placeholder="Enter the question for which you want a coding solution.",
-                        lines=5,
-                        elem_id="user_question",
-                        show_copy_button=True,
-                    )
-                    user_input_preview = gr.Markdown(visible=False)
-                    btn_code = gr.Button(
-                        value="Let's code!",
-                        variant="primary",
-                    )
+                    # with gr.Accordion(
+                    #     label=f"{self._llm_provider} LLM and agent orchestrator configuration",
+                    #     open=False,
+                    # ):
+                    #     with gr.Group():
+                    #         gr.JSON(
+                    #             value=self._llm.model,
+                    #             label=f"{self._llm_provider} LLM configuration",
+                    #             show_label=True,
+                    #         )
+                    # gr.Image(
+                    #     value=PIL.Image.open(
+                    #         BytesIO(
+                    #             self._agent_orchestrator.agent_graph.get_graph().draw_mermaid_png(
+                    #                 curve_style=CurveStyle.BASIS,
+                    #                 # The node styles are SVG attributes, see: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute
+                    #                 node_colors=NodeStyles(
+                    #                     first="fill:#9ccc2b, fill-opacity:0.35, font-family:'monospace'",
+                    #                     last="fill:#cc2b2b, fill-opacity:0.25, font-family:'monospace'",
+                    #                     default="fill:#2ba9cc, fill-opacity:0.35, font-family:'monospace'",
+                    #                 ),
+                    #             )
+                    #         )
+                    #     ),
+                    #     label="Agent orchestrator graph",
+                    #     show_label=True,
+                    #     show_download_button=False,
+                    #     show_fullscreen_button=False,
+                    #     show_share_button=False,
+                    #     format="png",
+                    # )
+                    with gr.Group():
+                        chk_show_user_input_preview = gr.Checkbox(
+                            value=False,
+                            label="Preview question (Markdown formatted)",
+                        )
+                        input_user_question = gr.TextArea(
+                            label="Question (in Markdown format)",
+                            placeholder="Enter the question for which you want a coding solution.",
+                            lines=5,
+                            elem_id="user_question",
+                            show_copy_button=True,
+                        )
+                        user_input_preview = gr.Markdown(visible=False)
+                        btn_code = gr.Button(
+                            value="Let's code!",
+                            variant="primary",
+                        )
+                    with gr.Group():
+                        chatbot_hitl = gr.Chatbot(
+                            label="Human-in-the-loop chat",
+                            layout="panel",
+                            type="messages",
+                            bubble_full_width=True,
+                            placeholder="The AI model will initiate a chat when necessary.",
+                        )
+                        gr.Textbox(
+                            label="Human message",
+                            show_label=False,
+                            placeholder="Enter a response to the last message from the AI model.",
+                        )
                     with gr.Accordion(label="Code evaluation", open=False):
                         gr.Markdown(
                             "Provide test cases to evaluate the code. _These test cases will not be sent to the AI model_."
@@ -405,7 +442,7 @@ class GradioApp:
                             )
                 with gr.Column(elem_id="ui_main_right"):
                     with gr.Accordion(
-                        label="Generated solution",
+                        label=f"Generated solution using {self._llm_provider} LLM (model: {self._llm.model})",
                         open=True,
                     ):
                         with gr.Group():
@@ -435,11 +472,13 @@ class GradioApp:
                     input_user_question,
                     slider_runtime_limit,
                     list_test_cases,
+                    chatbot_hitl,
                 ],
                 outputs=[
                     output_reasoning,
                     output_pseudocode,
                     output_code,
+                    chatbot_hitl,
                 ],
                 api_name="get_coding_solution",
             )
