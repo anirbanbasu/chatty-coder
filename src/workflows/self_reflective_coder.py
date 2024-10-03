@@ -27,12 +27,16 @@ from llama_index.core.llms.llm import LLM
 from llama_index.core.tools import BaseTool
 from llama_index.core.base.llms.types import CompletionResponse
 
+import dirtyjson as json
+
 from code_executor import CodeExecutor
 from constants import (
     CHAR_ENCODING_UTF8,
     EMPTY_STRING,
     EXECUTOR_MESSAGE__FAILED,
     EXECUTOR_MESSAGE__PASSED,
+    PYDANTIC_MODEL__CODE_OUTPUT__CODE,
+    PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE,
 )
 from utils import remove_markdown_codeblock_backticks
 from workflows.common import CodeExecutionResult, TestCase, WorkflowStatusEvent
@@ -179,11 +183,15 @@ class CompetitiveCoderWorkflow(Workflow):
                 problem=ev.problem
             ),
         )
-        response: DraftSolutionResultEvent = (
-            DraftSolutionResultEvent.model_validate_json(raw_response.text)
+        response: DraftSolutionResultEvent = DraftSolutionResultEvent.model_validate(
+            json.loads(raw_response.text), strict=False
         )
-        response.pseudocode = remove_markdown_codeblock_backticks(response.pseudocode)
-        response.code = remove_markdown_codeblock_backticks(response.code)
+        if hasattr(response, PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE):
+            response.pseudocode = remove_markdown_codeblock_backticks(
+                response.pseudocode
+            )
+        if hasattr(response, PYDANTIC_MODEL__CODE_OUTPUT__CODE):
+            response.code = remove_markdown_codeblock_backticks(response.code)
         self._finished_steps += 1
         ctx.write_event_to_stream(
             WorkflowStatusEvent(
@@ -231,12 +239,16 @@ class CompetitiveCoderWorkflow(Workflow):
                 ),
             )
             response: DraftSolutionResultEvent = (
-                DraftSolutionResultEvent.model_validate_json(raw_response.text)
+                DraftSolutionResultEvent.model_validate(
+                    json.loads(raw_response.text), strict=False
+                )
             )
-            response.pseudocode = remove_markdown_codeblock_backticks(
-                response.pseudocode
-            )
-            response.code = remove_markdown_codeblock_backticks(response.code)
+            if hasattr(response, PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE):
+                response.pseudocode = remove_markdown_codeblock_backticks(
+                    response.pseudocode
+                )
+            if hasattr(response, PYDANTIC_MODEL__CODE_OUTPUT__CODE):
+                response.code = remove_markdown_codeblock_backticks(response.code)
             self._finished_steps += 1
             ctx.write_event_to_stream(
                 WorkflowStatusEvent(
