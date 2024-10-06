@@ -17,7 +17,6 @@
 from typing import List
 import dirtyjson as json
 import sys
-import asyncio
 from tqdm import tqdm
 
 from llama_index.core.llms.llm import LLM
@@ -36,8 +35,15 @@ from constants import (
     PYDANTIC_MODEL__CODE_OUTPUT__REASONING,
 )
 from utils import get_terminal_size
-from workflows.common import TestCase
+from workflows.common import (
+    TestCase,
+    WorkflowStatusEvent,
+)
 from workflows.self_reflective_coder import CompetitiveCoderWorkflow
+
+from llama_index.core.workflow.events import (
+    HumanResponseEvent,
+)
 
 try:
     from icecream import ic
@@ -109,16 +115,32 @@ class ChattyCoderEngine:
                 return workflow
         raise ValueError(f"Workflow with name '{workflow_name}' is not supported.")
 
+    def send_human_response(self, response: str):
+        if (
+            self._running_workflow_handler is not None
+            and not self._running_workflow_handler.is_done()
+        ):
+            # self._running_workflow_handler.ctx.send_event(
+            #     HumanResponseEvent(response=response)
+            # )
+            self._human_response = response
+            # self._human_input_available_indicator.state = (
+            #     HumanInputAvailableIndicatorTask.STATE_DONE
+            # )
+            self._running_workflow_handler.ctx.send_event(
+                HumanResponseEvent(response=self._human_response)
+            )
+
     async def run(
         self,
         problem: str,
         test_cases: List[TestCase] = None,
         runtime_limit: float = 30.0,
-        workflow: str = CompetitiveCoderWorkflow.__name__,
+        workflow_name: str = CompetitiveCoderWorkflow.__name__,
     ):
-        # Instantiating the ReAct workflow instead may not be always enough to get the desired responses to certain questions.
-        chosen_workflow = self.get_workflow_by_name(workflow)
+        chosen_workflow = self.get_workflow_by_name(workflow_name)
 
+        # Should the timeout be None for human-in-the-loop workflows?
         workflow_init_kwargs = {"llm": self.llm, "timeout": 180, "verbose": True}
         workflow_run_kwargs = {}
 
@@ -129,15 +151,15 @@ class ChattyCoderEngine:
             workflow_run_kwargs["test_cases"] = test_cases
             workflow_run_kwargs["runtime_limit"] = runtime_limit
         else:
-            raise ValueError(f"Workflow '{workflow}' is not supported.")
+            raise ValueError(f"Workflow '{workflow_name}' is not supported.")
 
-        self.workflow: Workflow = chosen_workflow(**workflow_init_kwargs)
+        workflow: Workflow = chosen_workflow(**workflow_init_kwargs)
         print(
-            f"\nAttempting the question using the {workflow} workflow. This may take a while...",
+            f"\nAttempting the question using the {workflow_name} workflow. This may take a while...",
             flush=True,
         )
 
-        self.running_workflow_handler: WorkflowHandler = self.workflow.run(
+        self._running_workflow_handler: WorkflowHandler = workflow.run(
             **workflow_run_kwargs
         )
         done: bool = False
@@ -152,18 +174,28 @@ class ChattyCoderEngine:
             desc=PROJECT_NAME,
             colour="yellow",
         )
-        async for ev in self.workflow.stream_events():
-            total_steps = ev.total_steps
-            finished_steps = ev.finished_steps
-            print(f"\n{str(ev.msg)}", flush=True)
-            progress_bar.reset(total=total_steps)
-            progress_bar.update(finished_steps)
-            progress_bar.refresh()
-            yield done, finished_steps, total_steps, ev
+        async for event in self._running_workflow_handler.stream_events():
+            if isinstance(event, WorkflowStatusEvent):
+                total_steps = event.total_steps
+                finished_steps = event.finished_steps
+                print(f"\n{str(event.msg)}", flush=True)
+                progress_bar.reset(total=total_steps)
+                progress_bar.update(finished_steps)
+                progress_bar.refresh()
+            yield done, finished_steps, total_steps, event
         try:
-            done, pending = await asyncio.wait([self.running_workflow_handler])
-            if done:
-                result = json.loads(self.running_workflow_handler.result())
+            # done_tasks, pending_tasks = await asyncio.wait(
+            #     [self._running_workflow_handler],
+            #     timeout=runtime_limit,
+            # )
+            # done = self._running_workflow_handler.is_done()
+            # if done_tasks and done:
+            #     result = json.loads(self._running_workflow_handler.result())
+
+            # for task in pending_tasks:
+            #     ic(task)
+            result = json.loads(await self._running_workflow_handler)
+            done = True
         except Exception as e:
             result = {
                 PYDANTIC_MODEL__CODE_OUTPUT__REASONING: f"\nException in running the workflow(s). Type: {type(e).__name__}. Message: '{str(e)}'",
@@ -176,4 +208,4 @@ class ChattyCoderEngine:
             raise e
         finally:
             progress_bar.close()
-        yield done, finished_steps, total_steps, result
+            yield done, finished_steps, total_steps, result

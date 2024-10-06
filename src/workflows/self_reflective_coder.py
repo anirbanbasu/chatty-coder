@@ -17,6 +17,11 @@ from llama_index.core.workflow import (
     step,
     Context,
     Workflow,
+)
+
+from llama_index.core.workflow.events import (
+    InputRequiredEvent,
+    HumanResponseEvent,
     Event,
     StartEvent,
     StopEvent,
@@ -89,21 +94,21 @@ class CompetitiveCoderWorkflow(Workflow):
     CTX_DRAFT_SOLUTION = "draft_solution"
 
     PROMPT_TEMPLATE_DRAFT_SOLVE = PromptTemplate(
-        "You are a world-class Python programmer. "
-        "You write concise and well-documented code following the PEP8 style guide. Please respond with a Python 3 solution to the given problem below."
+        "You are a world-class Python programmer. Please respond with a Python 3 solution to the given problem below."
         "\nFirst, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution. "
         "Then, output a complete `pseudocode` in Pascal to implement your concept solution. "
         "Finally, output a well-documented and working Python 3 `code` for your solution. Do not use external libraries."
-        "\nImplement your Python code as a function named `solve`. The function must accept `args` as a list of string arguments. It must convert each argument to the correct type as necessary. The function must return the result. "
+        # "\nPlease ALWAYS output a JSON dictionary exactly as follows:"
+        # "\n{"
+        # '\n\t"reasoning": "the reasoning you generate",'
+        # '\n\t"pseudocode": "the pseudocode you generate",'
+        # '\n\t"code": "the code you generate",'
+        # "\n}\n"
+        "\nPlease ONLY output a correct JSON dictionary with only the following keys: `reasoning`, `pseudocode`, and `code`. Please DO NOT output anything else."
+        "Implement your Python code as a function named `solve`. The function must accept `args` as a list of string arguments. It must convert each argument to the correct type as necessary. The function must return the result. "
         # Stop outputting a generator function.
         "The function must `return` a result, not `yield` intermediate results."
         # "\nPlease format your response as a JSON dictionary, using `reasoning`, `pseudocode`, and `code` as keys. "
-        "\nPlease format your response as a JSON dictionary exactly as follows:"
-        "\n{{"
-        '\n\t"reasoning": "the reasoning you generate",'
-        '\n\t"pseudocode": "the pseudocode you generate",'
-        '\n\t"code": "the code you generate",'
-        "}}\n"
         # The following instruction about Markdown formatting is necessary to make the output look good on Gradio.
         # "Please format the values of these JSON keys as Markdown."
         # "Please ensure that the line breaks in the values of these JSON keys are correct for renderring as Markdown. However, do not format the `pseudocode` or `code` as Markdown."
@@ -118,15 +123,16 @@ class CompetitiveCoderWorkflow(Workflow):
         "\nFor your improved solution, first, output a detailed `reasoning` through the problem and conceptualise a solution. Whenever possible, add a time and a space complexity analysis for your solution. "
         "Then, output a complete `pseudocode` in Pascal to implement your concept solution. "
         "Finally, output a well-documented and working Python 3 `code` for your solution. Do not use external libraries."
-        "\nImplement your Python code as a function named `solve`. The function must accept `args` as a list of string arguments. It must convert each argument to the correct type as necessary. The function must return the result. "
+        # "\nPlease ALWAYS output a JSON dictionary exactly as follows:"
+        # "\n{"
+        # '\n\t"reasoning": "the reasoning you generate",'
+        # '\n\t"pseudocode": "the pseudocode you generate",'
+        # '\n\t"code": "the code you generate",'
+        # "\n}\n"
+        "\nPlease ONLY output a correct JSON dictionary with only the following keys: `reasoning`, `pseudocode`, and `code`. Please DO NOT output anything else."
+        "Implement your Python code as a function named `solve`. The function must accept `args` as a list of string arguments. It must convert each argument to the correct type as necessary. The function must return the result. "
         # Stop outputting a generator function.
         "The function must `return` a result, not `yield` intermediate results."
-        "\nPlease format your response as a JSON dictionary exactly as follows:"
-        "\n{{"
-        '\n\t"reasoning": "the reasoning you generate",'
-        '\n\t"pseudocode": "the pseudocode you generate",'
-        '\n\t"code": "the code you generate",'
-        "}}\n"
         # The following instruction about Markdown formatting is necessary to make the output look good on Gradio.
         # "Please format the values of these JSON keys as Markdown."
         "\n\n[BEGIN PROBLEM]\n{problem}\n[END PROBLEM]"
@@ -153,6 +159,28 @@ class CompetitiveCoderWorkflow(Workflow):
         self._finished_steps = 0
 
     @step
+    async def intercept_human_intervention(
+        self, ctx: Context, ev: HumanResponseEvent
+    ) -> StopEvent:
+        draft_solution: DraftSolutionResultEvent = await ctx.get(
+            CompetitiveCoderWorkflow.CTX_DRAFT_SOLUTION
+        )
+        self._total_steps += 1
+        self._finished_steps += 1
+        ctx.write_event_to_stream(
+            WorkflowStatusEvent(
+                msg=f"Obtained a response from the human:\n{ev.response}",
+                total_steps=self._total_steps,
+                finished_steps=self._finished_steps,
+            )
+        )
+        return StopEvent(
+            result=draft_solution.model_dump_json(serialize_as_any=True).encode(
+                encoding=CHAR_ENCODING_UTF8
+            )
+        )
+
+    @step
     async def draft_solve(
         self, ctx: Context, ev: StartEvent
     ) -> DraftSolutionResultEvent:
@@ -177,15 +205,26 @@ class CompetitiveCoderWorkflow(Workflow):
                 finished_steps=self._finished_steps,
             )
         )
-        # TODO: Prefer acomplete to astructured_predict?
+        # # TODO: Prefer acomplete to astructured_predict?
         raw_response: CompletionResponse = await self.llm.acomplete(
             prompt=CompetitiveCoderWorkflow.PROMPT_TEMPLATE_DRAFT_SOLVE.format(
                 problem=ev.problem
             ),
         )
+        # ic(raw_response)
         response: DraftSolutionResultEvent = DraftSolutionResultEvent.model_validate(
             json.loads(raw_response.text), strict=False
         )
+        # response: DraftSolutionResultEvent = (
+        #     DraftSolutionResultEvent.model_validate_strings(
+        #         raw_response.text, strict=False
+        #     )
+        # )
+        # response: DraftSolutionResultEvent = DraftSolutionResultEvent(
+        #     reasoning="The Test Reasoning",
+        #     pseudocode="Hello",
+        #     code="```\nprint('Hello, World!')\n```",
+        # )
         if hasattr(response, PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE):
             response.pseudocode = remove_markdown_codeblock_backticks(
                 response.pseudocode
@@ -200,6 +239,7 @@ class CompetitiveCoderWorkflow(Workflow):
                 finished_steps=self._finished_steps,
             )
         )
+        ctx.write_event_to_stream(response)
         return response
 
     @step
@@ -257,6 +297,7 @@ class CompetitiveCoderWorkflow(Workflow):
                     finished_steps=self._finished_steps,
                 )
             )
+            ctx.write_event_to_stream(response)
         else:
             response = draft_solution
         return StopEvent(
@@ -268,13 +309,14 @@ class CompetitiveCoderWorkflow(Workflow):
     @step
     async def evaluate_with_test_cases(
         self, ctx: Context, ev: DraftSolutionResultEvent
-    ) -> CodeExecutionResultEvent | StopEvent:
+    ) -> CodeExecutionResultEvent | InputRequiredEvent:
         result: List[CodeExecutionResult] = []
         # Evaluate a solution
         test_cases: List[TestCase] = await ctx.get(
             CompetitiveCoderWorkflow.CTX_KEY_TEST_CASES
         )
         at_least_one_test_failed: bool = False
+        await ctx.set(CompetitiveCoderWorkflow.CTX_DRAFT_SOLUTION, ev)
         runtime_limit: int = await ctx.get(CompetitiveCoderWorkflow.CTX_RUNTIME_LIMIT)
         if not test_cases or len(test_cases) == 0:
             ctx.write_event_to_stream(
@@ -327,11 +369,14 @@ class CompetitiveCoderWorkflow(Workflow):
             )
         if len(result) > 0 and at_least_one_test_failed:
             # Update the draft solution
-            await ctx.set(CompetitiveCoderWorkflow.CTX_DRAFT_SOLUTION, ev)
             return CodeExecutionResultEvent(results=result)
 
-        return StopEvent(
-            result=ev.model_dump_json(serialize_as_any=True).encode(
-                encoding=CHAR_ENCODING_UTF8
-            )
+        # return StopEvent(
+        #     result=ev.model_dump_json(serialize_as_any=True).encode(
+        #         encoding=CHAR_ENCODING_UTF8
+        #     )
+        # )
+        return InputRequiredEvent(
+            prefix=EMPTY_STRING,
+            msg=ev.reasoning,
         )

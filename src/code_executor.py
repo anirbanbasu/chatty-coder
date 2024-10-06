@@ -163,5 +163,4 @@ class CodeExecutor:
                 result = constants.EXECUTOR_MESSAGE__NO_RESULTS
             finally:
                 process.close()
-                # ic(input_data, expected_output, result)
         return result

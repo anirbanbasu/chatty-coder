@@ -14,9 +14,7 @@
 
 """Stuff common to all the workflows."""
 
-from llama_index.core.workflow import (
-    Event,
-)
+from llama_index.core.workflow import Event
 
 from llama_index.core.bridge.pydantic import BaseModel, Field
 
@@ -61,26 +59,5 @@ class WorkflowStatusEvent(Event):
     """
 
     msg: str
-    total_steps: int = 0
-    finished_steps: int = 0
-
-
-class WorkflowStatusWithPartialSolution(Event):
-    """
-    Event to update the status of the workflow with a partial solution.
-
-    Fields:
-        msg (str): The message to display.
-        partial_solution (str): The partial solution.
-        partial_pseudo_code (str): The partial pseudo code.
-        partial_code (str): The partial code.
-        total_steps (int): Optional total number of steps, defaults to zero.
-        finished_steps (int): Optional number of steps finished, defaults to zero.
-    """
-
-    msg: str
-    partial_solution: str
-    partial_pseudo_code: str
-    partial_code: str
     total_steps: int = 0
     finished_steps: int = 0

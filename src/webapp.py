@@ -19,6 +19,9 @@ from dotenv import load_dotenv
 from engine import ChattyCoderEngine
 from workflows.common import TestCase, WorkflowStatusEvent
 from utils import parse_env
+from llama_index.core.workflow.events import InputRequiredEvent
+
+from workflows.self_reflective_coder import DraftSolutionResultEvent
 
 try:
     from icecream import ic
@@ -49,8 +52,6 @@ from constants import (
 
 class GradioApp:
     """The main Gradio app class."""
-
-    _gr_state_user_input_text = gr.State(constants.EMPTY_STRING)
 
     def __init__(self):
         """Default constructor for the Gradio app."""
@@ -234,6 +235,7 @@ class GradioApp:
         ):
             # Stream events and results
             self.agent_task_pending = True
+            chat_history = []
             generator = self.workflow_engine.run(
                 problem=user_question,
                 test_cases=test_cases,
@@ -243,22 +245,35 @@ class GradioApp:
                 done,
                 finished_steps,
                 total_steps,
-                result,
+                streamed_object,
             ) in generator:
                 if done:
                     agent_status(progress=None)
                     self.agent_task_pending = False
-                    # ic(result)
-                    # chat_history.clear()
-                    yield (
-                        result[PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
-                        result[PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
-                        result[PYDANTIC_MODEL__CODE_OUTPUT__CODE],
-                        chat_history,
-                    )
+                    yield [
+                        streamed_object[PYDANTIC_MODEL__CODE_OUTPUT__REASONING],
+                        streamed_object[PYDANTIC_MODEL__CODE_OUTPUT__PSEUDOCODE],
+                        streamed_object[PYDANTIC_MODEL__CODE_OUTPUT__CODE],
+                        gr.update(),
+                    ]
                 else:
-                    if isinstance(result, WorkflowStatusEvent):
-                        status_msg = result.msg
+                    if isinstance(streamed_object, InputRequiredEvent):
+                        # Hide the progress bar?
+                        agent_status(progress=None)
+                        chat_history.append(
+                            ChatMessage(
+                                role=MessageRole.ASSISTANT,
+                                content=str(streamed_object.msg),
+                            ).dict()
+                        )
+                        yield [
+                            gr.update(),
+                            gr.update(),
+                            gr.update(),
+                            gr.update(value=chat_history),
+                        ]
+                    elif isinstance(streamed_object, WorkflowStatusEvent):
+                        status_msg = streamed_object.msg
                         status = (
                             str(status_msg)[:125] + ELLIPSIS
                             if len(str(status_msg)) > 125
@@ -267,12 +282,29 @@ class GradioApp:
                         agent_status(
                             progress=(finished_steps, total_steps), desc=status
                         )
-                        chat_history.append(
-                            ChatMessage(
-                                role=MessageRole.ASSISTANT, content=status_msg
-                            ).dict()
-                        )
-                        yield (EMPTY_STRING, EMPTY_STRING, EMPTY_STRING, chat_history)
+                    elif isinstance(streamed_object, DraftSolutionResultEvent):
+                        yield [
+                            streamed_object.reasoning,
+                            streamed_object.pseudocode,
+                            streamed_object.code,
+                            chat_history,
+                        ]
+
+    async def hitl_response(self, response: str, chat_history):
+        """
+        Handle the human-in-the-loop response.
+
+        Args:
+            response (str): The response from the human.
+            chat_history (List[ChatMessage]): The chat history.
+        """
+        self.workflow_engine.send_human_response(response)
+        chat_history.append(ChatMessage(role=MessageRole.USER, content=response).dict())
+        # ic(chat_history)
+        return [
+            gr.update(value=EMPTY_STRING),
+            gr.update(value=chat_history),
+        ]
 
     def add_test_case(
         self, test_cases: list[TestCase] | None, test_case_in: str, test_case_out: str
@@ -349,37 +381,6 @@ class GradioApp:
                     btn_theme_toggle = gr.Button("Toggle dark mode")
             with gr.Row(elem_id="ui_main"):
                 with gr.Column(elem_id="ui_main_left"):
-                    # with gr.Accordion(
-                    #     label=f"{self._llm_provider} LLM and agent orchestrator configuration",
-                    #     open=False,
-                    # ):
-                    #     with gr.Group():
-                    #         gr.JSON(
-                    #             value=self._llm.model,
-                    #             label=f"{self._llm_provider} LLM configuration",
-                    #             show_label=True,
-                    #         )
-                    # gr.Image(
-                    #     value=PIL.Image.open(
-                    #         BytesIO(
-                    #             self._agent_orchestrator.agent_graph.get_graph().draw_mermaid_png(
-                    #                 curve_style=CurveStyle.BASIS,
-                    #                 # The node styles are SVG attributes, see: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute
-                    #                 node_colors=NodeStyles(
-                    #                     first="fill:#9ccc2b, fill-opacity:0.35, font-family:'monospace'",
-                    #                     last="fill:#cc2b2b, fill-opacity:0.25, font-family:'monospace'",
-                    #                     default="fill:#2ba9cc, fill-opacity:0.35, font-family:'monospace'",
-                    #                 ),
-                    #             )
-                    #         )
-                    #     ),
-                    #     label="Agent orchestrator graph",
-                    #     show_label=True,
-                    #     show_download_button=False,
-                    #     show_fullscreen_button=False,
-                    #     show_share_button=False,
-                    #     format="png",
-                    # )
                     with gr.Group():
                         chk_show_user_input_preview = gr.Checkbox(
                             value=False,
@@ -400,12 +401,12 @@ class GradioApp:
                     with gr.Group():
                         chatbot_hitl = gr.Chatbot(
                             label="Human-in-the-loop chat",
-                            layout="panel",
+                            layout="bubble",
                             type="messages",
-                            bubble_full_width=True,
-                            placeholder="The AI model will initiate a chat when necessary.",
+                            bubble_full_width=False,
+                            # placeholder="The AI model will initiate a chat when necessary.",
                         )
-                        gr.Textbox(
+                        input_hitl_response = gr.Textbox(
                             label="Human message",
                             show_label=False,
                             placeholder="Enter a response to the last message from the AI model.",
@@ -452,12 +453,15 @@ class GradioApp:
                                 line_breaks=True,
                             )
                             output_pseudocode = gr.Code(
-                                label="Pseudocode", show_label=True
+                                label="Pseudocode",
+                                show_label=True,
+                                interactive=False,
                             )
                             output_code = gr.Code(
                                 label="Python code",
                                 show_label=True,
                                 language="python",
+                                interactive=False,
                             )
             # Button actions
             btn_theme_toggle.click(
@@ -481,6 +485,7 @@ class GradioApp:
                     chatbot_hitl,
                 ],
                 api_name="get_coding_solution",
+                # queue=False,
             )
 
             btn_add_test_case.click(
@@ -506,6 +511,15 @@ class GradioApp:
                 inputs=[input_user_question],
                 outputs=[user_input_preview],
                 api_name=False,
+            )
+
+            input_hitl_response.submit(
+                self.hitl_response,
+                inputs=[input_hitl_response, chatbot_hitl],
+                outputs=[input_hitl_response, chatbot_hitl],
+                api_name="human_response",
+                # show_progress=False,
+                # queue=False,
             )
 
             chk_show_user_input_preview.change(
